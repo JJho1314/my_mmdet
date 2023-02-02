@@ -1,3 +1,4 @@
+# Copyright (c) OpenMMLab. All rights reserved.
 import os.path as osp
 import xml.etree.ElementTree as ET
 
@@ -15,6 +16,8 @@ class WIDERFaceDataset(XMLDataset):
     https://github.com/sovrasov/wider-face-pascal-voc-annotations
     """
     CLASSES = ('face', )
+
+    PALETTE = [(0, 255, 0)]
 
     def __init__(self, **kwargs):
         super(WIDERFaceDataset, self).__init__(**kwargs)

@@ -1,3 +1,4 @@
+# Copyright (c) OpenMMLab. All rights reserved.
 import torch
 
 from mmdet.utils import util_mixins
@@ -100,7 +101,7 @@ class AssignResult(util_mixins.NiceRepr):
         Args:
             num_preds: number of predicted boxes
             num_gts: number of true boxes
-            p_ignore (float): probability of a predicted box assinged to an
+            p_ignore (float): probability of a predicted box assigned to an
                 ignored truth
             p_assigned (float): probability of a predicted box not being
                 assigned
@@ -139,6 +140,7 @@ class AssignResult(util_mixins.NiceRepr):
                 labels = None
         else:
             import numpy as np
+
             # Create an overlap for each predicted box
             max_overlaps = torch.from_numpy(rng.rand(num_preds))
 
@@ -163,7 +165,7 @@ class AssignResult(util_mixins.NiceRepr):
             true_idxs = np.arange(num_gts)
             rng.shuffle(true_idxs)
             true_idxs = torch.from_numpy(true_idxs)
-            gt_inds[is_assigned] = true_idxs[:n_assigned]
+            gt_inds[is_assigned] = true_idxs[:n_assigned].long()
 
             gt_inds = torch.from_numpy(
                 rng.randint(1, num_gts + 1, size=num_preds))

@@ -1,3 +1,4 @@
+# Copyright (c) OpenMMLab. All rights reserved.
 import itertools
 import logging
 import os.path as osp
@@ -11,8 +12,6 @@ from terminaltables import AsciiTable
 
 from .builder import DATASETS
 from .coco import CocoDataset
-from torch import distributed as dist
-import json
 
 
 @DATASETS.register_module()
@@ -268,10 +267,14 @@ class LVISV05Dataset(CocoDataset):
         'wrench', 'wristband', 'wristlet', 'yacht', 'yak', 'yogurt',
         'yoke_(animal_equipment)', 'zebra', 'zucchini')
 
+    PALETTE = None
+
     def load_annotations(self, ann_file):
         """Load annotation from lvis style annotation file.
+
         Args:
             ann_file (str): Path of annotation file.
+
         Returns:
             list[dict]: Annotation info from LVIS api.
         """
@@ -310,10 +313,11 @@ class LVISV05Dataset(CocoDataset):
                  metric='bbox',
                  logger=None,
                  jsonfile_prefix=None,
-                 classwise=True,
+                 classwise=False,
                  proposal_nums=(100, 300, 1000),
                  iou_thrs=np.arange(0.5, 0.96, 0.05)):
         """Evaluation in LVIS protocol.
+
         Args:
             results (list[list | tuple]): Testing results of the dataset.
             metric (str | list[str]): Metrics to be evaluated. Options are
@@ -328,6 +332,7 @@ class LVISV05Dataset(CocoDataset):
             iou_thrs (Sequence[float]): IoU threshold used for evaluating
                 recalls. If set to a list, the average recall of all IoUs will
                 also be computed. Default: 0.5.
+
         Returns:
             dict[str, float]: LVIS style metrics.
         """
@@ -338,7 +343,7 @@ class LVISV05Dataset(CocoDataset):
                 warnings.warn(
                     'mmlvis is deprecated, please install official lvis-api by "pip install git+https://github.com/lvis-dataset/lvis-api.git"',  # noqa: E501
                     UserWarning)
-            from lvis import LVISResults, LVISEval
+            from lvis import LVISEval, LVISResults
         except ImportError:
             raise ImportError(
                 'Package lvis is not installed. Please run "pip install git+https://github.com/lvis-dataset/lvis-api.git".'  # noqa: E501
@@ -421,9 +426,10 @@ class LVISV05Dataset(CocoDataset):
                     for idx, catId in enumerate(self.cat_ids):
                         # area range index 0: all area ranges
                         # max dets index -1: typically 100 per image
+                        # the dimensions of precisions are
+                        # [num_thrs, num_recalls, num_cats, num_area_rngs]
                         nm = self.coco.load_cats([catId])[0]
                         precision = precisions[:, :, idx, 0]
-                        # precision = precisions[:, :, idx, 0, -1]
                         precision = precision[precision > -1]
                         if precision.size:
                             ap = np.mean(precision)
@@ -708,7 +714,6 @@ class LVISV1Dataset(LVISDataset):
         'wreath', 'wrench', 'wristband', 'wristlet', 'yacht', 'yogurt',
         'yoke_(animal_equipment)', 'zebra', 'zucchini')
 
-
     def load_annotations(self, ann_file):
         try:
             import lvis
@@ -724,36 +729,7 @@ class LVISV1Dataset(LVISDataset):
         self.coco = LVIS(ann_file)
         self.cat_ids = self.coco.get_cat_ids()
         self.cat2label = {cat_id: i for i, cat_id in enumerate(self.cat_ids)}
-        cats = {}
-        self.ignore_ids = []
         self.img_ids = self.coco.get_img_ids()
-        for cat in self.coco.cats:
-            cat_info = self.coco.cats[cat]
-            if cat_info['frequency'] == 'r':
-                self.ignore_ids.append(cat)
-            else:
-                cats[cat] = self.coco.cats[cat]
-        #------------------------------------------
-        self.id_idx = None
-        # """
-        if  not self.test_mode:
-            self.id_idx = {}
-            for idx,img_id in enumerate(self.img_ids):
-                self.id_idx[img_id] = idx
-            rare_cls_img_ids = []
-            cat_ids = []
-            cnt = 0
-            for cat in self.coco.cats:
-                cat_info = self.coco.cats[cat]
-                if cat_info['frequency'] == 'r':
-                    continue
-                cat_ids.append(cat)
-                cnt += 1
-                rare_cls_img_ids.extend(self.coco.cat_img_map[cat])
-            self.img_ids = np.unique(rare_cls_img_ids).tolist()
-        # self.img_ids = self.img_ids[:200]
-        # """
-        #-----------------------------------------------------
         data_infos = []
         for i in self.img_ids:
             info = self.coco.load_imgs([i])[0]
@@ -763,125 +739,4 @@ class LVISV1Dataset(LVISDataset):
             info['filename'] = info['coco_url'].replace(
                 'http://images.cocodataset.org/', '')
             data_infos.append(info)
-        self.gt_for_save = {}
-        self.rank = dist.get_rank()
-        return data_infos
-
-    def _parse_ann_info(self, img_info, ann_info):
-        """Parse bbox and mask annotation.
-
-        Args:
-            ann_info (list[dict]): Annotation info of an image.
-            with_mask (bool): Whether to parse mask annotations.
-
-        Returns:
-            dict: A dict containing the following keys: bboxes, bboxes_ignore,\
-                labels, masks, seg_map. "masks" are raw annotations and not \
-                decoded into binary masks.
-        """
-        gt_bboxes = []
-        gt_labels = []
-        gt_bboxes_ignore = []
-        gt_masks_ann = []
-        for i, ann in enumerate(ann_info):
-            if ann.get('ignore', False):
-                continue
-            x1, y1, w, h = ann['bbox']
-            inter_w = max(0, min(x1 + w, img_info['width']) - max(x1, 0))
-            inter_h = max(0, min(y1 + h, img_info['height']) - max(y1, 0))
-            if inter_w * inter_h == 0:
-                continue
-            if ann['area'] <= 0 or w < 1 or h < 1:
-                continue
-            if ann['category_id'] not in self.cat_ids:
-                continue
-            if ann['category_id'] in self.ignore_ids:
-                # print('ignore {}'.format(ann['category_id']))
-                continue
-            bbox = [x1, y1, x1 + w, y1 + h]
-            if ann.get('iscrowd', False):
-                gt_bboxes_ignore.append(bbox)
-            else:
-                gt_bboxes.append(bbox)
-                gt_labels.append(self.cat2label[ann['category_id']])
-                gt_masks_ann.append(ann.get('segmentation', None))
-
-        if gt_bboxes:
-            gt_bboxes = np.array(gt_bboxes, dtype=np.float32)
-            gt_labels = np.array(gt_labels, dtype=np.int64)
-        else:
-            gt_bboxes = np.zeros((0, 4), dtype=np.float32)
-            gt_labels = np.array([], dtype=np.int64)
-
-        if gt_bboxes_ignore:
-            gt_bboxes_ignore = np.array(gt_bboxes_ignore, dtype=np.float32)
-        else:
-            gt_bboxes_ignore = np.zeros((0, 4), dtype=np.float32)
-
-        seg_map = img_info['filename'].replace('jpg', 'png')
-
-        ann = dict(
-            bboxes=gt_bboxes,
-            labels=gt_labels,
-            bboxes_ignore=gt_bboxes_ignore,
-            masks=gt_masks_ann,
-            seg_map=seg_map)
-
-        # self.gt_for_save[img_info['filename']] = [{'bbox':bbox.tolist(),'name': gt_labels[i].tolist()} for i,bbox in enumerate(gt_bboxes)]
-        # json.dump(self.gt_for_save,open('/home/dy20/mmdetection27/workdirs/' + str(self.rank) + '_gt.json','w'))
-        return ann
-
-
-@DATASETS.register_module()
-class LVISV1Dataset_ALLCLS(LVISV1Dataset):
-    def load_annotations(self, ann_file):
-        try:
-            import lvis
-            if getattr(lvis, '__version__', '0') >= '10.5.3':
-                warnings.warn(
-                    'mmlvis is deprecated, please install official lvis-api by "pip install git+https://github.com/lvis-dataset/lvis-api.git"',  # noqa: E501
-                    UserWarning)
-            from lvis import LVIS
-        except ImportError:
-            raise ImportError(
-                'Package lvis is not installed. Please run "pip install git+https://github.com/lvis-dataset/lvis-api.git".'  # noqa: E501
-            )
-        self.coco = LVIS(ann_file)
-        self.cat_ids = self.coco.get_cat_ids()
-        self.cat2label = {cat_id: i for i, cat_id in enumerate(self.cat_ids)}
-        cats = {}
-        self.ignore_ids = []
-        self.img_ids = self.coco.get_img_ids()
-        # self.img_ids = self.img_ids[:200]
-        #------------------------------------------
-        self.id_idx = None
-        """
-        if not self.test_mode:
-            self.id_idx = {}
-            for idx,img_id in enumerate(self.img_ids):
-                self.id_idx[img_id] = idx
-            rare_cls_img_ids = []
-            cat_ids = []
-            cnt = 0
-            for cat in self.coco.cats:
-                cat_info = self.coco.cats[cat]
-                if cat_info['frequency'] != 'r':
-                    continue
-                cat_ids.append(cat)
-                cnt += 1
-                rare_cls_img_ids.extend(self.coco.cat_img_map[cat])
-            self.img_ids = np.unique(rare_cls_img_ids).tolist()
-        """
-        #-----------------------------------------------------
-        data_infos = []
-        for i in self.img_ids:
-            info = self.coco.load_imgs([i])[0]
-            # coco_url is used in LVISv1 instead of file_name
-            # e.g. http://images.cocodataset.org/train2017/000000391895.jpg
-            # train/val split in specified in url
-            info['filename'] = info['coco_url'].replace(
-                'http://images.cocodataset.org/', '')
-            data_infos.append(info)
-        self.gt_for_save = {}
-        self.rank = dist.get_rank()
         return data_infos

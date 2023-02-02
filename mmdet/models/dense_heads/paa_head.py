@@ -1,3 +1,4 @@
+# Copyright (c) OpenMMLab. All rights reserved.
 import numpy as np
 import torch
 from mmcv.runner import force_fp32
@@ -113,7 +114,7 @@ class PAAHead(ATSSHead):
         """
 
         featmap_sizes = [featmap.size()[-2:] for featmap in cls_scores]
-        assert len(featmap_sizes) == self.anchor_generator.num_levels
+        assert len(featmap_sizes) == self.prior_generator.num_levels
 
         device = cls_scores[0].device
         anchor_list, valid_flag_list = self.get_anchors(
@@ -144,25 +145,25 @@ class PAAHead(ATSSHead):
                                        bboxes_weight, pos_inds)
 
         with torch.no_grad():
-            labels, label_weights, bbox_weights, num_pos = multi_apply(
-                self.paa_reassign,
-                pos_losses_list,
-                labels,
-                labels_weight,
-                bboxes_weight,
-                pos_inds,
-                pos_gt_index,
-                anchor_list,
-            )
+            reassign_labels, reassign_label_weight, \
+                reassign_bbox_weights, num_pos = multi_apply(
+                    self.paa_reassign,
+                    pos_losses_list,
+                    labels,
+                    labels_weight,
+                    bboxes_weight,
+                    pos_inds,
+                    pos_gt_index,
+                    anchor_list)
             num_pos = sum(num_pos)
         # convert all tensor list to a flatten tensor
         cls_scores = torch.cat(cls_scores, 0).view(-1, cls_scores[0].size(-1))
         bbox_preds = torch.cat(bbox_preds, 0).view(-1, bbox_preds[0].size(-1))
         iou_preds = torch.cat(iou_preds, 0).view(-1, iou_preds[0].size(-1))
-        labels = torch.cat(labels, 0).view(-1)
+        labels = torch.cat(reassign_labels, 0).view(-1)
         flatten_anchors = torch.cat(
             [torch.cat(item, 0) for item in anchor_list])
-        labels_weight = torch.cat(labels_weight, 0).view(-1)
+        labels_weight = torch.cat(reassign_label_weight, 0).view(-1)
         bboxes_target = torch.cat(bboxes_target,
                                   0).view(-1, bboxes_target[0].size(-1))
 
@@ -240,14 +241,14 @@ class PAAHead(ATSSHead):
             pos_scores,
             pos_label,
             pos_label_weight,
-            avg_factor=self.loss_cls.loss_weight,
+            avg_factor=1.0,
             reduction_override='none')
 
         loss_bbox = self.loss_bbox(
             pos_bbox_pred,
             pos_bbox_target,
             pos_bbox_weight,
-            avg_factor=self.loss_cls.loss_weight,
+            avg_factor=1.0,  # keep same loss weight before reassign
             reduction_override='none')
 
         loss_cls = loss_cls.sum(-1)
@@ -288,7 +289,9 @@ class PAAHead(ATSSHead):
         """
         if not len(pos_inds):
             return label, label_weight, bbox_weight, 0
-
+        label = label.clone()
+        label_weight = label_weight.clone()
+        bbox_weight = bbox_weight.clone()
         num_gt = pos_gt_inds.max() + 1
         num_level = len(anchors)
         num_anchors_each_level = [item.size(0) for item in anchors]
@@ -383,7 +386,7 @@ class PAAHead(ATSSHead):
                 - pos_inds_temp (Tensor): Indices of positive samples.
                 - ignore_inds_temp (Tensor): Indices of ignore samples.
         """
-        # The implementation is (c) in Fig.3 in origin paper intead of (b).
+        # The implementation is (c) in Fig.3 in origin paper instead of (b).
         # You can refer to issues such as
         # https://github.com/kkhoot/PAA/issues/8 and
         # https://github.com/kkhoot/PAA/issues/9.
@@ -503,7 +506,7 @@ class PAAHead(ATSSHead):
         This method is same as `AnchorHead._get_targets_single()`.
         """
         assert unmap_outputs, 'We must map outputs back to the original' \
-            'set of anchors in PAAhead'
+                              'set of anchors in PAAhead'
         return super(ATSSHead, self)._get_targets_single(
             flat_anchors,
             valid_flags,
@@ -514,51 +517,152 @@ class PAAHead(ATSSHead):
             label_channels=1,
             unmap_outputs=True)
 
+    @force_fp32(apply_to=('cls_scores', 'bbox_preds'))
+    def get_bboxes(self,
+                   cls_scores,
+                   bbox_preds,
+                   score_factors=None,
+                   img_metas=None,
+                   cfg=None,
+                   rescale=False,
+                   with_nms=True,
+                   **kwargs):
+        assert with_nms, 'PAA only supports "with_nms=True" now and it ' \
+                         'means PAAHead does not support ' \
+                         'test-time augmentation'
+        return super(ATSSHead, self).get_bboxes(cls_scores, bbox_preds,
+                                                score_factors, img_metas, cfg,
+                                                rescale, with_nms, **kwargs)
+
     def _get_bboxes_single(self,
-                           cls_scores,
-                           bbox_preds,
-                           iou_preds,
-                           mlvl_anchors,
-                           img_shape,
-                           scale_factor,
+                           cls_score_list,
+                           bbox_pred_list,
+                           score_factor_list,
+                           mlvl_priors,
+                           img_meta,
                            cfg,
                            rescale=False,
-                           with_nms=True):
-        """Transform outputs for a single batch item into labeled boxes.
+                           with_nms=True,
+                           **kwargs):
+        """Transform outputs of a single image into bbox predictions.
 
-        This method is almost same as `ATSSHead._get_bboxes_single()`.
-        We use sqrt(iou_preds * cls_scores) in NMS process instead of just
-        cls_scores. Besides, score voting is used when `` score_voting``
-        is set to True.
+        Args:
+            cls_score_list (list[Tensor]): Box scores from all scale
+                levels of a single image, each item has shape
+                (num_priors * num_classes, H, W).
+            bbox_pred_list (list[Tensor]): Box energies / deltas from
+                all scale levels of a single image, each item has shape
+                (num_priors * 4, H, W).
+            score_factor_list (list[Tensor]): Score factors from all scale
+                levels of a single image, each item has shape
+                (num_priors * 1, H, W).
+            mlvl_priors (list[Tensor]): Each element in the list is
+                the priors of a single level in feature pyramid, has shape
+                (num_priors, 4).
+            img_meta (dict): Image meta info.
+            cfg (mmcv.Config): Test / postprocessing configuration,
+                if None, test_cfg would be used.
+            rescale (bool): If True, return boxes in original image space.
+                Default: False.
+            with_nms (bool): If True, do nms before return boxes.
+                Default: True.
+
+        Returns:
+            tuple[Tensor]: Results of detected bboxes and labels. If with_nms
+                is False and mlvl_score_factor is None, return mlvl_bboxes and
+                mlvl_scores, else return mlvl_bboxes, mlvl_scores and
+                mlvl_score_factor. Usually with_nms is False is used for aug
+                test. If with_nms is True, then return the following format
+
+                - det_bboxes (Tensor): Predicted bboxes with shape \
+                    [num_bboxes, 5], where the first 4 columns are bounding \
+                    box positions (tl_x, tl_y, br_x, br_y) and the 5-th \
+                    column are scores between 0 and 1.
+                - det_labels (Tensor): Predicted labels of the corresponding \
+                    box with shape [num_bboxes].
         """
-        assert with_nms, 'PAA only supports "with_nms=True" now'
-        assert len(cls_scores) == len(bbox_preds) == len(mlvl_anchors)
+        cfg = self.test_cfg if cfg is None else cfg
+        img_shape = img_meta['img_shape']
+        nms_pre = cfg.get('nms_pre', -1)
+
         mlvl_bboxes = []
         mlvl_scores = []
-        mlvl_iou_preds = []
-        for cls_score, bbox_pred, iou_preds, anchors in zip(
-                cls_scores, bbox_preds, iou_preds, mlvl_anchors):
+        mlvl_score_factors = []
+        for level_idx, (cls_score, bbox_pred, score_factor, priors) in \
+                enumerate(zip(cls_score_list, bbox_pred_list,
+                              score_factor_list, mlvl_priors)):
             assert cls_score.size()[-2:] == bbox_pred.size()[-2:]
 
             scores = cls_score.permute(1, 2, 0).reshape(
                 -1, self.cls_out_channels).sigmoid()
             bbox_pred = bbox_pred.permute(1, 2, 0).reshape(-1, 4)
-            iou_preds = iou_preds.permute(1, 2, 0).reshape(-1).sigmoid()
-            nms_pre = cfg.get('nms_pre', -1)
-            if nms_pre > 0 and scores.shape[0] > nms_pre:
-                max_scores, _ = (scores * iou_preds[:, None]).sqrt().max(dim=1)
+            score_factor = score_factor.permute(1, 2, 0).reshape(-1).sigmoid()
+
+            if 0 < nms_pre < scores.shape[0]:
+                max_scores, _ = (scores *
+                                 score_factor[:, None]).sqrt().max(dim=1)
                 _, topk_inds = max_scores.topk(nms_pre)
-                anchors = anchors[topk_inds, :]
+                priors = priors[topk_inds, :]
                 bbox_pred = bbox_pred[topk_inds, :]
                 scores = scores[topk_inds, :]
-                iou_preds = iou_preds[topk_inds]
+                score_factor = score_factor[topk_inds]
 
             bboxes = self.bbox_coder.decode(
-                anchors, bbox_pred, max_shape=img_shape)
+                priors, bbox_pred, max_shape=img_shape)
             mlvl_bboxes.append(bboxes)
             mlvl_scores.append(scores)
-            mlvl_iou_preds.append(iou_preds)
+            mlvl_score_factors.append(score_factor)
 
+        return self._bbox_post_process(mlvl_scores, mlvl_bboxes,
+                                       img_meta['scale_factor'], cfg, rescale,
+                                       with_nms, mlvl_score_factors, **kwargs)
+
+    def _bbox_post_process(self,
+                           mlvl_scores,
+                           mlvl_bboxes,
+                           scale_factor,
+                           cfg,
+                           rescale=False,
+                           with_nms=True,
+                           mlvl_score_factors=None,
+                           **kwargs):
+        """bbox post-processing method.
+
+        The boxes would be rescaled to the original image scale and do
+        the nms operation. Usually with_nms is False is used for aug test.
+
+        Args:
+            mlvl_scores (list[Tensor]): Box scores from all scale
+                levels of a single image, each item has shape
+                (num_bboxes, num_class).
+            mlvl_bboxes (list[Tensor]): Decoded bboxes from all scale
+                levels of a single image, each item has shape (num_bboxes, 4).
+            scale_factor (ndarray, optional): Scale factor of the image arange
+                as (w_scale, h_scale, w_scale, h_scale).
+            cfg (mmcv.Config): Test / postprocessing configuration,
+                if None, test_cfg would be used.
+            rescale (bool): If True, return boxes in original image space.
+                Default: False.
+            with_nms (bool): If True, do nms before return boxes.
+                Default: True.
+            mlvl_score_factors (list[Tensor], optional): Score factor from
+                all scale levels of a single image, each item has shape
+                (num_bboxes, ). Default: None.
+
+        Returns:
+            tuple[Tensor]: Results of detected bboxes and labels. If with_nms
+                is False and mlvl_score_factor is None, return mlvl_bboxes and
+                mlvl_scores, else return mlvl_bboxes, mlvl_scores and
+                mlvl_score_factor. Usually with_nms is False is used for aug
+                test. If with_nms is True, then return the following format
+
+                - det_bboxes (Tensor): Predicted bboxes with shape \
+                    [num_bboxes, 5], where the first 4 columns are bounding \
+                    box positions (tl_x, tl_y, br_x, br_y) and the 5-th \
+                    column are scores between 0 and 1.
+                - det_labels (Tensor): Predicted labels of the corresponding \
+                    box with shape [num_bboxes].
+        """
         mlvl_bboxes = torch.cat(mlvl_bboxes)
         if rescale:
             mlvl_bboxes /= mlvl_bboxes.new_tensor(scale_factor)
@@ -568,7 +672,8 @@ class PAAHead(ATSSHead):
         # BG cat_id: num_class
         padding = mlvl_scores.new_zeros(mlvl_scores.shape[0], 1)
         mlvl_scores = torch.cat([mlvl_scores, padding], dim=1)
-        mlvl_iou_preds = torch.cat(mlvl_iou_preds)
+
+        mlvl_iou_preds = torch.cat(mlvl_score_factors)
         mlvl_nms_scores = (mlvl_scores * mlvl_iou_preds[:, None]).sqrt()
         det_bboxes, det_labels = multiclass_nms(
             mlvl_bboxes,
@@ -577,7 +682,7 @@ class PAAHead(ATSSHead):
             cfg.nms,
             cfg.max_per_img,
             score_factors=None)
-        if self.with_score_voting:
+        if self.with_score_voting and len(det_bboxes) > 0:
             det_bboxes, det_labels = self.score_voting(det_bboxes, det_labels,
                                                        mlvl_bboxes,
                                                        mlvl_nms_scores,
@@ -600,8 +705,6 @@ class PAAHead(ATSSHead):
                 with shape (num_anchors,4).
             mlvl_nms_scores (Tensor): The scores of all boxes which is used
                 in the NMS procedure, with shape (num_anchors, num_class)
-            mlvl_iou_preds (Tensot): The predictions of IOU of all boxes
-                before the NMS procedure, with shape (num_anchors, 1)
             score_thr (float): The score threshold of bboxes.
 
         Returns:
@@ -614,9 +717,9 @@ class PAAHead(ATSSHead):
                     after voting, with shape (num_anchors,).
         """
         candidate_mask = mlvl_nms_scores > score_thr
-        candidate_mask_nozeros = candidate_mask.nonzero()
-        candidate_inds = candidate_mask_nozeros[:, 0]
-        candidate_labels = candidate_mask_nozeros[:, 1]
+        candidate_mask_nonzeros = candidate_mask.nonzero(as_tuple=False)
+        candidate_inds = candidate_mask_nonzeros[:, 0]
+        candidate_labels = candidate_mask_nonzeros[:, 1]
         candidate_bboxes = mlvl_bboxes[candidate_inds]
         candidate_scores = mlvl_nms_scores[candidate_mask]
         det_bboxes_voted = []

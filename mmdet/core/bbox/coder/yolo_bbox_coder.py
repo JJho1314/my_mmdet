@@ -1,3 +1,5 @@
+# Copyright (c) OpenMMLab. All rights reserved.
+import mmcv
 import torch
 
 from ..builder import BBOX_CODERS
@@ -21,6 +23,7 @@ class YOLOBBoxCoder(BaseBBoxCoder):
         super(BaseBBoxCoder, self).__init__()
         self.eps = eps
 
+    @mmcv.jit(coderize=True)
     def encode(self, bboxes, gt_bboxes, stride):
         """Get box regression transformation deltas that can be used to
         transform the ``bboxes`` into the ``gt_bboxes``.
@@ -55,6 +58,7 @@ class YOLOBBoxCoder(BaseBBoxCoder):
             [x_center_target, y_center_target, w_target, h_target], dim=-1)
         return encoded_bboxes
 
+    @mmcv.jit(coderize=True)
     def decode(self, bboxes, pred_bboxes, stride):
         """Apply transformation `pred_bboxes` to `boxes`.
 
@@ -66,21 +70,14 @@ class YOLOBBoxCoder(BaseBBoxCoder):
         Returns:
             torch.Tensor: Decoded boxes.
         """
-        assert pred_bboxes.size(0) == bboxes.size(0)
         assert pred_bboxes.size(-1) == bboxes.size(-1) == 4
-        x_center = (bboxes[..., 0] + bboxes[..., 2]) * 0.5
-        y_center = (bboxes[..., 1] + bboxes[..., 3]) * 0.5
-        w = bboxes[..., 2] - bboxes[..., 0]
-        h = bboxes[..., 3] - bboxes[..., 1]
-        # Get outputs x, y
-        x_center_pred = (pred_bboxes[..., 0] - 0.5) * stride + x_center
-        y_center_pred = (pred_bboxes[..., 1] - 0.5) * stride + y_center
-        w_pred = torch.exp(pred_bboxes[..., 2]) * w
-        h_pred = torch.exp(pred_bboxes[..., 3]) * h
-
+        xy_centers = (bboxes[..., :2] + bboxes[..., 2:]) * 0.5 + (
+            pred_bboxes[..., :2] - 0.5) * stride
+        whs = (bboxes[..., 2:] -
+               bboxes[..., :2]) * 0.5 * pred_bboxes[..., 2:].exp()
         decoded_bboxes = torch.stack(
-            (x_center_pred - w_pred / 2, y_center_pred - h_pred / 2,
-             x_center_pred + w_pred / 2, y_center_pred + h_pred / 2),
+            (xy_centers[..., 0] - whs[..., 0], xy_centers[..., 1] -
+             whs[..., 1], xy_centers[..., 0] + whs[..., 0],
+             xy_centers[..., 1] + whs[..., 1]),
             dim=-1)
-
         return decoded_bboxes

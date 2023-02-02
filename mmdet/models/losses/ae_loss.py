@@ -1,3 +1,5 @@
+# Copyright (c) OpenMMLab. All rights reserved.
+import mmcv
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
@@ -5,6 +7,7 @@ import torch.nn.functional as F
 from ..builder import LOSSES
 
 
+@mmcv.jit(derivate=True, coderize=True)
 def ae_loss_per_image(tl_preds, br_preds, match):
     """Associative Embedding Loss in one image.
 

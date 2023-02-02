@@ -1,3 +1,4 @@
+# Copyright (c) OpenMMLab. All rights reserved.
 from abc import ABCMeta, abstractmethod
 from collections import OrderedDict
 
@@ -5,18 +6,16 @@ import mmcv
 import numpy as np
 import torch
 import torch.distributed as dist
-import torch.nn as nn
-from mmcv.runner import auto_fp16
-from mmcv.utils import print_log
+from mmcv.runner import BaseModule, auto_fp16
 
-from mmdet.utils import get_root_logger
+from mmdet.core.visualization import imshow_det_bboxes
 
 
-class BaseDetector(nn.Module, metaclass=ABCMeta):
+class BaseDetector(BaseModule, metaclass=ABCMeta):
     """Base class for detectors."""
 
-    def __init__(self):
-        super(BaseDetector, self).__init__()
+    def __init__(self, init_cfg=None):
+        super(BaseDetector, self).__init__(init_cfg)
         self.fp16_enabled = False
 
     @property
@@ -64,7 +63,7 @@ class BaseDetector(nn.Module, metaclass=ABCMeta):
     def forward_train(self, imgs, img_metas, **kwargs):
         """
         Args:
-            img (list[Tensor]): List of tensors of shape (1, C, H, W).
+            img (Tensor): of shape (N, C, H, W) encoding input images.
                 Typically these should be mean centered and std scaled.
             img_metas (list[dict]): List of image info dict where each dict
                 has: 'img_shape', 'scale_factor', 'flip', and may also contain
@@ -92,17 +91,6 @@ class BaseDetector(nn.Module, metaclass=ABCMeta):
         """Test function with test time augmentation."""
         pass
 
-    def init_weights(self, pretrained=None):
-        """Initialize the weights in detector.
-
-        Args:
-            pretrained (str, optional): Path to pre-trained weights.
-                Defaults to None.
-        """
-        if pretrained is not None:
-            logger = get_root_logger()
-            print_log(f'load model from: {pretrained}', logger=logger)
-
     async def aforward_test(self, *, img, img_metas, **kwargs):
         for var, name in [(img, 'img'), (img_metas, 'img_metas')]:
             if not isinstance(var, list):
@@ -121,7 +109,7 @@ class BaseDetector(nn.Module, metaclass=ABCMeta):
         else:
             raise NotImplementedError
 
-    def forward_test(self, imgs,imgs_no_normalized, img_metas, **kwargs):
+    def forward_test(self, imgs, img_metas, **kwargs):
         """
         Args:
             imgs (List[Tensor]): the outer list indicates test-time
@@ -156,7 +144,7 @@ class BaseDetector(nn.Module, metaclass=ABCMeta):
             # proposals.
             if 'proposals' in kwargs:
                 kwargs['proposals'] = kwargs['proposals'][0]
-            return self.simple_test(imgs[0],imgs_no_normalized[0], img_metas[0], **kwargs)
+            return self.simple_test(imgs[0], img_metas[0], **kwargs)
         else:
             assert imgs[0].size(0) == 1, 'aug test does not support ' \
                                          'inference with batch size ' \
@@ -165,8 +153,8 @@ class BaseDetector(nn.Module, metaclass=ABCMeta):
             assert 'proposals' not in kwargs
             return self.aug_test(imgs, img_metas, **kwargs)
 
-    @auto_fp16(apply_to=('img','img_no_normalize'))
-    def forward(self, img, img_no_normalize, img_metas, return_loss=True, **kwargs):
+    @auto_fp16(apply_to=('img', ))
+    def forward(self, img, img_metas, return_loss=True, **kwargs):
         """Calls either :func:`forward_train` or :func:`forward_test` depending
         on whether ``return_loss`` is ``True``.
 
@@ -176,17 +164,21 @@ class BaseDetector(nn.Module, metaclass=ABCMeta):
         should be double nested (i.e.  List[Tensor], List[List[dict]]), with
         the outer list indicating test time augmentations.
         """
+        if torch.onnx.is_in_onnx_export():
+            assert len(img_metas) == 1
+            return self.onnx_export(img[0], img_metas[0])
+
         if return_loss:
-            return self.forward_train(img,img_no_normalize, img_metas, **kwargs)
+            return self.forward_train(img, img_metas, **kwargs)
         else:
-            return self.forward_test(img,img_no_normalize, img_metas, **kwargs)
+            return self.forward_test(img, img_metas, **kwargs)
 
     def _parse_losses(self, losses):
         """Parse the raw outputs (losses) of the network.
 
         Args:
             losses (dict): Raw output of the network, which usually contain
-                losses and other necessary infomation.
+                losses and other necessary information.
 
         Returns:
             tuple[Tensor, dict]: (loss, log_vars), loss is the loss tensor \
@@ -205,6 +197,16 @@ class BaseDetector(nn.Module, metaclass=ABCMeta):
 
         loss = sum(_value for _key, _value in log_vars.items()
                    if 'loss' in _key)
+
+        # If the loss_vars has different length, GPUs will wait infinitely
+        if dist.is_available() and dist.is_initialized():
+            log_var_length = torch.tensor(len(log_vars), device=loss.device)
+            dist.all_reduce(log_var_length)
+            message = (f'rank {dist.get_rank()}' +
+                       f' len(log_vars): {len(log_vars)}' + ' keys: ' +
+                       ','.join(log_vars.keys()))
+            assert log_var_length == len(log_vars) * dist.get_world_size(), \
+                'loss log variables are different across GPUs!\n' + message
 
         log_vars['loss'] = loss
         for loss_name, loss_value in log_vars.items():
@@ -235,13 +237,13 @@ class BaseDetector(nn.Module, metaclass=ABCMeta):
             dict: It should contain at least 3 keys: ``loss``, ``log_vars``, \
                 ``num_samples``.
 
-                - ``loss`` is a tensor for back propagation, which can be a \
-                weighted sum of multiple losses.
+                - ``loss`` is a tensor for back propagation, which can be a
+                  weighted sum of multiple losses.
                 - ``log_vars`` contains all the variables to be sent to the
-                logger.
-                - ``num_samples`` indicates the batch size (when the model is \
-                DDP, it means the batch size on each GPU), which is used for \
-                averaging the logs.
+                  logger.
+                - ``num_samples`` indicates the batch size (when the model is
+                  DDP, it means the batch size on each GPU), which is used for
+                  averaging the logs.
         """
         losses = self(**data)
         loss, log_vars = self._parse_losses(losses)
@@ -251,7 +253,7 @@ class BaseDetector(nn.Module, metaclass=ABCMeta):
 
         return outputs
 
-    def val_step(self, data, optimizer):
+    def val_step(self, data, optimizer=None):
         """The iteration step during validation.
 
         This method shares the same signature as :func:`train_step`, but used
@@ -270,10 +272,11 @@ class BaseDetector(nn.Module, metaclass=ABCMeta):
                     img,
                     result,
                     score_thr=0.3,
-                    bbox_color='green',
-                    text_color='green',
-                    thickness=1,
-                    font_scale=0.5,
+                    bbox_color=(72, 101, 241),
+                    text_color=(72, 101, 241),
+                    mask_color=None,
+                    thickness=2,
+                    font_size=13,
                     win_name='',
                     show=False,
                     wait_time=0,
@@ -286,12 +289,17 @@ class BaseDetector(nn.Module, metaclass=ABCMeta):
                 bbox_result or (bbox_result, segm_result).
             score_thr (float, optional): Minimum score of bboxes to be shown.
                 Default: 0.3.
-            bbox_color (str or tuple or :obj:`Color`): Color of bbox lines.
-            text_color (str or tuple or :obj:`Color`): Color of texts.
-            thickness (int): Thickness of lines.
-            font_scale (float): Font scales of texts.
-            win_name (str): The window name.
-            wait_time (int): Value of waitKey param.
+            bbox_color (str or tuple(int) or :obj:`Color`):Color of bbox lines.
+               The tuple of color should be in BGR order. Default: 'green'
+            text_color (str or tuple(int) or :obj:`Color`):Color of texts.
+               The tuple of color should be in BGR order. Default: 'green'
+            mask_color (None or str or tuple(int) or :obj:`Color`):
+               Color of masks. The tuple of color should be in BGR order.
+               Default: None
+            thickness (int): Thickness of lines. Default: 2
+            font_size (int): Font size of texts. Default: 13
+            win_name (str): The window name. Default: ''
+            wait_time (float): Value of waitKey param.
                 Default: 0.
             show (bool): Whether to show the image.
                 Default: False.
@@ -316,36 +324,29 @@ class BaseDetector(nn.Module, metaclass=ABCMeta):
         ]
         labels = np.concatenate(labels)
         # draw segmentation masks
+        segms = None
         if segm_result is not None and len(labels) > 0:  # non empty
             segms = mmcv.concat_list(segm_result)
-            inds = np.where(bboxes[:, -1] > score_thr)[0]
-            np.random.seed(42)
-            color_masks = [
-                np.random.randint(0, 256, (1, 3), dtype=np.uint8)
-                for _ in range(max(labels) + 1)
-            ]
-            for i in inds:
-                i = int(i)
-                color_mask = color_masks[labels[i]]
-                sg = segms[i]
-                if isinstance(sg, torch.Tensor):
-                    sg = sg.detach().cpu().numpy()
-                mask = sg.astype(bool)
-                img[mask] = img[mask] * 0.5 + color_mask * 0.5
+            if isinstance(segms[0], torch.Tensor):
+                segms = torch.stack(segms, dim=0).detach().cpu().numpy()
+            else:
+                segms = np.stack(segms, axis=0)
         # if out_file specified, do not show image in window
         if out_file is not None:
             show = False
         # draw bounding boxes
-        mmcv.imshow_det_bboxes(
+        img = imshow_det_bboxes(
             img,
             bboxes,
             labels,
+            segms,
             class_names=self.CLASSES,
             score_thr=score_thr,
             bbox_color=bbox_color,
             text_color=text_color,
+            mask_color=mask_color,
             thickness=thickness,
-            font_scale=font_scale,
+            font_size=font_size,
             win_name=win_name,
             show=show,
             wait_time=wait_time,
@@ -353,3 +354,7 @@ class BaseDetector(nn.Module, metaclass=ABCMeta):
 
         if not (show or out_file):
             return img
+
+    def onnx_export(self, img, img_metas):
+        raise NotImplementedError(f'{self.__class__.__name__} does '
+                                  f'not support ONNX EXPORT')

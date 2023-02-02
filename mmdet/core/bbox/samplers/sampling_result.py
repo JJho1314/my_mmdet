@@ -1,3 +1,4 @@
+# Copyright (c) OpenMMLab. All rights reserved.
 import torch
 
 from mmdet.utils import util_mixins
@@ -41,7 +42,7 @@ class SamplingResult(util_mixins.NiceRepr):
             if len(gt_bboxes.shape) < 2:
                 gt_bboxes = gt_bboxes.view(-1, 4)
 
-            self.pos_gt_bboxes = gt_bboxes[self.pos_assigned_gt_inds, :]
+            self.pos_gt_bboxes = gt_bboxes[self.pos_assigned_gt_inds.long(), :]
 
         if assign_result.labels is not None:
             self.pos_gt_labels = assign_result.labels[pos_inds]
@@ -97,7 +98,7 @@ class SamplingResult(util_mixins.NiceRepr):
             kwargs (keyword arguments):
                 - num_preds: number of predicted boxes
                 - num_gts: number of true boxes
-                - p_ignore (float): probability of a predicted box assinged to \
+                - p_ignore (float): probability of a predicted box assigned to \
                     an ignored truth.
                 - p_assigned (float): probability of a predicted box not being \
                     assigned.
@@ -111,12 +112,12 @@ class SamplingResult(util_mixins.NiceRepr):
             >>> self = SamplingResult.random()
             >>> print(self.__dict__)
         """
-        from mmdet.core.bbox.samplers.random_sampler import RandomSampler
-        from mmdet.core.bbox.assigners.assign_result import AssignResult
         from mmdet.core.bbox import demodata
+        from mmdet.core.bbox.assigners.assign_result import AssignResult
+        from mmdet.core.bbox.samplers.random_sampler import RandomSampler
         rng = demodata.ensure_rng(rng)
 
-        # make probabalistic?
+        # make probabilistic?
         num = 32
         pos_fraction = 0.5
         neg_pos_ub = -1
@@ -140,7 +141,7 @@ class SamplingResult(util_mixins.NiceRepr):
         if gt_labels is None:
             add_gt_as_proposals = False
         else:
-            add_gt_as_proposals = True  # make probabalistic?
+            add_gt_as_proposals = True  # make probabilistic?
 
         sampler = RandomSampler(
             num,

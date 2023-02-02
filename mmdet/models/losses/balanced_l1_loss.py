@@ -1,3 +1,5 @@
+# Copyright (c) OpenMMLab. All rights reserved.
+import mmcv
 import numpy as np
 import torch
 import torch.nn as nn
@@ -6,6 +8,7 @@ from ..builder import LOSSES
 from .utils import weighted_loss
 
 
+@mmcv.jit(derivate=True, coderize=True)
 @weighted_loss
 def balanced_l1_loss(pred,
                      target,
@@ -35,7 +38,10 @@ def balanced_l1_loss(pred,
         torch.Tensor: The calculated loss
     """
     assert beta > 0
-    assert pred.size() == target.size() and target.numel() > 0
+    if target.numel() == 0:
+        return pred.sum() * 0
+
+    assert pred.size() == target.size()
 
     diff = torch.abs(pred - target)
     b = np.e**(gamma / alpha) - 1

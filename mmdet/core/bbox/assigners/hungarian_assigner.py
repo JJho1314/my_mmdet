@@ -1,15 +1,12 @@
+# Copyright (c) OpenMMLab. All rights reserved.
 import torch
+from scipy.optimize import linear_sum_assignment
 
 from ..builder import BBOX_ASSIGNERS
 from ..match_costs import build_match_cost
 from ..transforms import bbox_cxcywh_to_xyxy
 from .assign_result import AssignResult
 from .base_assigner import BaseAssigner
-
-try:
-    from scipy.optimize import linear_sum_assignment
-except ImportError:
-    linear_sum_assignment = None
 
 
 @BBOX_ASSIGNERS.register_module()
@@ -18,7 +15,7 @@ class HungarianAssigner(BaseAssigner):
 
     This class computes an assignment between the targets and the predictions
     based on the costs. The costs are weighted sum of three components:
-    classfication cost, regression L1 cost and regression iou cost. The
+    classification cost, regression L1 cost and regression iou cost. The
     targets don't include the no_object, so generally there are more
     predictions than targets. After the one-to-one matching, the un-matched
     are treated as backgrounds. Thus each query prediction will be assigned
@@ -109,8 +106,8 @@ class HungarianAssigner(BaseAssigner):
             return AssignResult(
                 num_gts, assigned_gt_inds, None, labels=assigned_labels)
         img_h, img_w, _ = img_meta['img_shape']
-        factor = torch.Tensor([img_w, img_h, img_w,
-                               img_h]).unsqueeze(0).to(gt_bboxes.device)
+        factor = gt_bboxes.new_tensor([img_w, img_h, img_w,
+                                       img_h]).unsqueeze(0)
 
         # 2. compute the weighted costs
         # classification and bboxcost.
@@ -126,9 +123,6 @@ class HungarianAssigner(BaseAssigner):
 
         # 3. do Hungarian matching on CPU using linear_sum_assignment
         cost = cost.detach().cpu()
-        if linear_sum_assignment is None:
-            raise ImportError('Please run "pip install scipy" '
-                              'to install scipy first.')
         matched_row_inds, matched_col_inds = linear_sum_assignment(cost)
         matched_row_inds = torch.from_numpy(matched_row_inds).to(
             bbox_pred.device)

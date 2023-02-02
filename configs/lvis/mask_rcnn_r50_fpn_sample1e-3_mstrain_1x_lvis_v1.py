@@ -3,11 +3,9 @@ _base_ = [
     '../_base_/datasets/lvis_v1_instance.py',
     '../_base_/schedules/schedule_1x.py', '../_base_/default_runtime.py'
 ]
-optimizer = dict(type='SGD', lr=0.01, momentum=0.9, weight_decay=0.00004)
 model = dict(
     roi_head=dict(
         bbox_head=dict(num_classes=1203), mask_head=dict(num_classes=1203)),
-        # bbox_head=dict(num_classes=866), mask_head=dict(num_classes=866)),
     test_cfg=dict(
         rcnn=dict(
             score_thr=0.0001,
@@ -17,7 +15,6 @@ img_norm_cfg = dict(
     mean=[123.675, 116.28, 103.53], std=[58.395, 57.12, 57.375], to_rgb=True)
 train_pipeline = [
     dict(type='LoadImageFromFile'),
-    dict(type='LoadProposals', num_max_proposals=None),
     dict(type='LoadAnnotations', with_bbox=True, with_mask=True),
     dict(
         type='Resize',
@@ -29,7 +26,6 @@ train_pipeline = [
     dict(type='Normalize', **img_norm_cfg),
     dict(type='Pad', size_divisor=32),
     dict(type='DefaultFormatBundle'),
-    dict(type='Collect', keys=['img','proposals', 'gt_bboxes', 'gt_labels', 'gt_masks']),
+    dict(type='Collect', keys=['img', 'gt_bboxes', 'gt_labels', 'gt_masks']),
 ]
 data = dict(train=dict(dataset=dict(pipeline=train_pipeline)))
-# fp16 = dict(loss_scale=512.)

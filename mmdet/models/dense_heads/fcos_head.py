@@ -1,10 +1,12 @@
+# Copyright (c) OpenMMLab. All rights reserved.
+import warnings
+
 import torch
 import torch.nn as nn
-import torch.nn.functional as F
-from mmcv.cnn import Scale, normal_init
+from mmcv.cnn import Scale
 from mmcv.runner import force_fp32
 
-from mmdet.core import distance2bbox, multi_apply, multiclass_nms
+from mmdet.core import multi_apply, reduce_mean
 from ..builder import HEADS, build_loss
 from .anchor_free_head import AnchorFreeHead
 
@@ -16,7 +18,7 @@ class FCOSHead(AnchorFreeHead):
     """Anchor-free head used in `FCOS <https://arxiv.org/abs/1904.01355>`_.
 
     The FCOS head does not use anchor boxes. Instead bounding boxes are
-    predicted at each pixel and a centerness measure is used to supress
+    predicted at each pixel and a centerness measure is used to suppress
     low-quality predictions.
     Here norm_on_bbox, centerness_on_reg, dcn_on_last_conv are training
     tricks used in official repo, which will bring remarkable mAP gains
@@ -46,6 +48,7 @@ class FCOSHead(AnchorFreeHead):
         loss_centerness (dict): Config of centerness loss.
         norm_cfg (dict): dictionary to construct and config norm layer.
             Default: norm_cfg=dict(type='GN', num_groups=32, requires_grad=True).
+        init_cfg (dict or list[dict], optional): Initialization config dict.
 
     Example:
         >>> self = FCOSHead(11, 7)
@@ -75,6 +78,15 @@ class FCOSHead(AnchorFreeHead):
                      use_sigmoid=True,
                      loss_weight=1.0),
                  norm_cfg=dict(type='GN', num_groups=32, requires_grad=True),
+                 init_cfg=dict(
+                     type='Normal',
+                     layer='Conv2d',
+                     std=0.01,
+                     override=dict(
+                         type='Normal',
+                         name='conv_cls',
+                         std=0.01,
+                         bias_prob=0.01)),
                  **kwargs):
         self.regress_ranges = regress_ranges
         self.center_sampling = center_sampling
@@ -87,6 +99,7 @@ class FCOSHead(AnchorFreeHead):
             loss_cls=loss_cls,
             loss_bbox=loss_bbox,
             norm_cfg=norm_cfg,
+            init_cfg=init_cfg,
             **kwargs)
         self.loss_centerness = build_loss(loss_centerness)
 
@@ -95,11 +108,6 @@ class FCOSHead(AnchorFreeHead):
         super()._init_layers()
         self.conv_centerness = nn.Conv2d(self.feat_channels, 1, 3, padding=1)
         self.scales = nn.ModuleList([Scale(1.0) for _ in self.strides])
-
-    def init_weights(self):
-        """Initialize weights of the head."""
-        super().init_weights()
-        normal_init(self.conv_centerness, std=0.01)
 
     def forward(self, feats):
         """Forward features from the upstream network.
@@ -116,14 +124,14 @@ class FCOSHead(AnchorFreeHead):
                 bbox_preds (list[Tensor]): Box energies / deltas for each \
                     scale level, each is a 4D-tensor, the channel number is \
                     num_points * 4.
-                centernesses (list[Tensor]): Centerss for each scale level, \
+                centernesses (list[Tensor]): centerness for each scale level, \
                     each is a 4D-tensor, the channel number is num_points * 1.
         """
         return multi_apply(self.forward_single, feats, self.scales,
                            self.strides)
 
     def forward_single(self, x, scale, stride):
-        """Forward features of a single scale levle.
+        """Forward features of a single scale level.
 
         Args:
             x (Tensor): FPN feature maps of the specified stride.
@@ -146,7 +154,10 @@ class FCOSHead(AnchorFreeHead):
         # float to avoid overflow when enabling FP16
         bbox_pred = scale(bbox_pred).float()
         if self.norm_on_bbox:
-            bbox_pred = F.relu(bbox_pred)
+            # bbox_pred needed for gradient computation has been modified
+            # by F.relu(bbox_pred) when run with PyTorch 1.10. So replace
+            # F.relu(bbox_pred) with bbox_pred.clamp(min=0)
+            bbox_pred = bbox_pred.clamp(min=0)
             if not self.training:
                 bbox_pred *= stride
         else:
@@ -171,7 +182,7 @@ class FCOSHead(AnchorFreeHead):
             bbox_preds (list[Tensor]): Box energies / deltas for each scale
                 level, each is a 4D-tensor, the channel number is
                 num_points * 4.
-            centernesses (list[Tensor]): Centerss for each scale level, each
+            centernesses (list[Tensor]): centerness for each scale level, each
                 is a 4D-tensor, the channel number is num_points * 1.
             gt_bboxes (list[Tensor]): Ground truth bboxes for each image with
                 shape (num_gts, 4) in [tl_x, tl_y, br_x, br_y] format.
@@ -186,8 +197,10 @@ class FCOSHead(AnchorFreeHead):
         """
         assert len(cls_scores) == len(bbox_preds) == len(centernesses)
         featmap_sizes = [featmap.size()[-2:] for featmap in cls_scores]
-        all_level_points = self.get_points(featmap_sizes, bbox_preds[0].dtype,
-                                           bbox_preds[0].device)
+        all_level_points = self.prior_generator.grid_priors(
+            featmap_sizes,
+            dtype=bbox_preds[0].dtype,
+            device=bbox_preds[0].device)
         labels, bbox_targets = self.get_targets(all_level_points, gt_bboxes,
                                                 gt_labels)
 
@@ -218,29 +231,33 @@ class FCOSHead(AnchorFreeHead):
         bg_class_ind = self.num_classes
         pos_inds = ((flatten_labels >= 0)
                     & (flatten_labels < bg_class_ind)).nonzero().reshape(-1)
-        num_pos = len(pos_inds)
+        num_pos = torch.tensor(
+            len(pos_inds), dtype=torch.float, device=bbox_preds[0].device)
+        num_pos = max(reduce_mean(num_pos), 1.0)
         loss_cls = self.loss_cls(
-            flatten_cls_scores, flatten_labels,
-            avg_factor=num_pos + num_imgs)  # avoid num_pos is 0
+            flatten_cls_scores, flatten_labels, avg_factor=num_pos)
 
         pos_bbox_preds = flatten_bbox_preds[pos_inds]
         pos_centerness = flatten_centerness[pos_inds]
+        pos_bbox_targets = flatten_bbox_targets[pos_inds]
+        pos_centerness_targets = self.centerness_target(pos_bbox_targets)
+        # centerness weighted iou loss
+        centerness_denorm = max(
+            reduce_mean(pos_centerness_targets.sum().detach()), 1e-6)
 
-        if num_pos > 0:
-            pos_bbox_targets = flatten_bbox_targets[pos_inds]
-            pos_centerness_targets = self.centerness_target(pos_bbox_targets)
+        if len(pos_inds) > 0:
             pos_points = flatten_points[pos_inds]
-            pos_decoded_bbox_preds = distance2bbox(pos_points, pos_bbox_preds)
-            pos_decoded_target_preds = distance2bbox(pos_points,
-                                                     pos_bbox_targets)
-            # centerness weighted iou loss
+            pos_decoded_bbox_preds = self.bbox_coder.decode(
+                pos_points, pos_bbox_preds)
+            pos_decoded_target_preds = self.bbox_coder.decode(
+                pos_points, pos_bbox_targets)
             loss_bbox = self.loss_bbox(
                 pos_decoded_bbox_preds,
                 pos_decoded_target_preds,
                 weight=pos_centerness_targets,
-                avg_factor=pos_centerness_targets.sum())
-            loss_centerness = self.loss_centerness(pos_centerness,
-                                                   pos_centerness_targets)
+                avg_factor=centerness_denorm)
+            loss_centerness = self.loss_centerness(
+                pos_centerness, pos_centerness_targets, avg_factor=num_pos)
         else:
             loss_bbox = pos_bbox_preds.sum()
             loss_centerness = pos_centerness.sum()
@@ -250,168 +267,8 @@ class FCOSHead(AnchorFreeHead):
             loss_bbox=loss_bbox,
             loss_centerness=loss_centerness)
 
-    @force_fp32(apply_to=('cls_scores', 'bbox_preds', 'centernesses'))
-    def get_bboxes(self,
-                   cls_scores,
-                   bbox_preds,
-                   centernesses,
-                   img_metas,
-                   cfg=None,
-                   rescale=False,
-                   with_nms=True):
-        """Transform network output for a batch into bbox predictions.
-
-        Args:
-            cls_scores (list[Tensor]): Box scores for each scale level
-                with shape (N, num_points * num_classes, H, W).
-            bbox_preds (list[Tensor]): Box energies / deltas for each scale
-                level with shape (N, num_points * 4, H, W).
-            centernesses (list[Tensor]): Centerness for each scale level with
-                shape (N, num_points * 1, H, W).
-            img_metas (list[dict]): Meta information of each image, e.g.,
-                image size, scaling factor, etc.
-            cfg (mmcv.Config | None): Test / postprocessing configuration,
-                if None, test_cfg would be used. Default: None.
-            rescale (bool): If True, return boxes in original image space.
-                Default: False.
-            with_nms (bool): If True, do nms before return boxes.
-                Default: True.
-
-        Returns:
-            list[tuple[Tensor, Tensor]]: Each item in result_list is 2-tuple.
-                The first item is an (n, 5) tensor, where the first 4 columns
-                are bounding box positions (tl_x, tl_y, br_x, br_y) and the
-                5-th column is a score between 0 and 1. The second item is a
-                (n,) tensor where each item is the predicted class label of the
-                corresponding box.
-        """
-        assert len(cls_scores) == len(bbox_preds)
-        num_levels = len(cls_scores)
-
-        featmap_sizes = [featmap.size()[-2:] for featmap in cls_scores]
-        mlvl_points = self.get_points(featmap_sizes, bbox_preds[0].dtype,
-                                      bbox_preds[0].device)
-        result_list = []
-        for img_id in range(len(img_metas)):
-            cls_score_list = [
-                cls_scores[i][img_id].detach() for i in range(num_levels)
-            ]
-            bbox_pred_list = [
-                bbox_preds[i][img_id].detach() for i in range(num_levels)
-            ]
-            centerness_pred_list = [
-                centernesses[i][img_id].detach() for i in range(num_levels)
-            ]
-            img_shape = img_metas[img_id]['img_shape']
-            scale_factor = img_metas[img_id]['scale_factor']
-            det_bboxes = self._get_bboxes_single(
-                cls_score_list, bbox_pred_list, centerness_pred_list,
-                mlvl_points, img_shape, scale_factor, cfg, rescale, with_nms)
-            result_list.append(det_bboxes)
-        return result_list
-
-    def _get_bboxes_single(self,
-                           cls_scores,
-                           bbox_preds,
-                           centernesses,
-                           mlvl_points,
-                           img_shape,
-                           scale_factor,
-                           cfg,
-                           rescale=False,
-                           with_nms=True):
-        """Transform outputs for a single batch item into bbox predictions.
-
-        Args:
-            cls_scores (list[Tensor]): Box scores for a single scale level
-                with shape (num_points * num_classes, H, W).
-            bbox_preds (list[Tensor]): Box energies / deltas for a single scale
-                level with shape (num_points * 4, H, W).
-            centernesses (list[Tensor]): Centerness for a single scale level
-                with shape (num_points * 4, H, W).
-            mlvl_points (list[Tensor]): Box reference for a single scale level
-                with shape (num_total_points, 4).
-            img_shape (tuple[int]): Shape of the input image,
-                (height, width, 3).
-            scale_factor (ndarray): Scale factor of the image arrange as
-                (w_scale, h_scale, w_scale, h_scale).
-            cfg (mmcv.Config | None): Test / postprocessing configuration,
-                if None, test_cfg would be used.
-            rescale (bool): If True, return boxes in original image space.
-                Default: False.
-            with_nms (bool): If True, do nms before return boxes.
-                Default: True.
-
-        Returns:
-            tuple(Tensor):
-                det_bboxes (Tensor): BBox predictions in shape (n, 5), where
-                    the first 4 columns are bounding box positions
-                    (tl_x, tl_y, br_x, br_y) and the 5-th column is a score
-                    between 0 and 1.
-                det_labels (Tensor): A (n,) tensor where each item is the
-                    predicted class label of the corresponding box.
-        """
-        cfg = self.test_cfg if cfg is None else cfg
-        assert len(cls_scores) == len(bbox_preds) == len(mlvl_points)
-        mlvl_bboxes = []
-        mlvl_scores = []
-        mlvl_centerness = []
-        for cls_score, bbox_pred, centerness, points in zip(
-                cls_scores, bbox_preds, centernesses, mlvl_points):
-            assert cls_score.size()[-2:] == bbox_pred.size()[-2:]
-            scores = cls_score.permute(1, 2, 0).reshape(
-                -1, self.cls_out_channels).sigmoid()
-            centerness = centerness.permute(1, 2, 0).reshape(-1).sigmoid()
-
-            bbox_pred = bbox_pred.permute(1, 2, 0).reshape(-1, 4)
-            nms_pre = cfg.get('nms_pre', -1)
-            if nms_pre > 0 and scores.shape[0] > nms_pre:
-                max_scores, _ = (scores * centerness[:, None]).max(dim=1)
-                _, topk_inds = max_scores.topk(nms_pre)
-                points = points[topk_inds, :]
-                bbox_pred = bbox_pred[topk_inds, :]
-                scores = scores[topk_inds, :]
-                centerness = centerness[topk_inds]
-            bboxes = distance2bbox(points, bbox_pred, max_shape=img_shape)
-            mlvl_bboxes.append(bboxes)
-            mlvl_scores.append(scores)
-            mlvl_centerness.append(centerness)
-        mlvl_bboxes = torch.cat(mlvl_bboxes)
-        if rescale:
-            mlvl_bboxes /= mlvl_bboxes.new_tensor(scale_factor)
-        mlvl_scores = torch.cat(mlvl_scores)
-        padding = mlvl_scores.new_zeros(mlvl_scores.shape[0], 1)
-        # remind that we set FG labels to [0, num_class-1] since mmdet v2.0
-        # BG cat_id: num_class
-        mlvl_scores = torch.cat([mlvl_scores, padding], dim=1)
-        mlvl_centerness = torch.cat(mlvl_centerness)
-
-        if with_nms:
-            det_bboxes, det_labels = multiclass_nms(
-                mlvl_bboxes,
-                mlvl_scores,
-                cfg.score_thr,
-                cfg.nms,
-                cfg.max_per_img,
-                score_factors=mlvl_centerness)
-            return det_bboxes, det_labels
-        else:
-            return mlvl_bboxes, mlvl_scores, mlvl_centerness
-
-    def _get_points_single(self,
-                           featmap_size,
-                           stride,
-                           dtype,
-                           device,
-                           flatten=False):
-        """Get points according to feature map sizes."""
-        y, x = super()._get_points_single(featmap_size, stride, dtype, device)
-        points = torch.stack((x.reshape(-1) * stride, y.reshape(-1) * stride),
-                             dim=-1) + stride // 2
-        return points
-
     def get_targets(self, points, gt_bboxes_list, gt_labels_list):
-        """Compute regression, classification and centerss targets for points
+        """Compute regression, classification and centerness targets for points
         in multiple images.
 
         Args:
@@ -568,7 +425,31 @@ class FCOSHead(AnchorFreeHead):
         # only calculate pos centerness targets, otherwise there may be nan
         left_right = pos_bbox_targets[:, [0, 2]]
         top_bottom = pos_bbox_targets[:, [1, 3]]
-        centerness_targets = (
-            left_right.min(dim=-1)[0] / left_right.max(dim=-1)[0]) * (
-                top_bottom.min(dim=-1)[0] / top_bottom.max(dim=-1)[0])
+        if len(left_right) == 0:
+            centerness_targets = left_right[..., 0]
+        else:
+            centerness_targets = (
+                left_right.min(dim=-1)[0] / left_right.max(dim=-1)[0]) * (
+                    top_bottom.min(dim=-1)[0] / top_bottom.max(dim=-1)[0])
         return torch.sqrt(centerness_targets)
+
+    def _get_points_single(self,
+                           featmap_size,
+                           stride,
+                           dtype,
+                           device,
+                           flatten=False):
+        """Get points according to feature map size.
+
+        This function will be deprecated soon.
+        """
+        warnings.warn(
+            '`_get_points_single` in `FCOSHead` will be '
+            'deprecated soon, we support a multi level point generator now'
+            'you can get points of a single level feature map '
+            'with `self.prior_generator.single_level_grid_priors` ')
+
+        y, x = super()._get_points_single(featmap_size, stride, dtype, device)
+        points = torch.stack((x.reshape(-1) * stride, y.reshape(-1) * stride),
+                             dim=-1) + stride // 2
+        return points

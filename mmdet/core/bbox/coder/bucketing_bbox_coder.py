@@ -1,3 +1,5 @@
+# Copyright (c) OpenMMLab. All rights reserved.
+import mmcv
 import numpy as np
 import torch
 import torch.nn.functional as F
@@ -9,7 +11,7 @@ from .base_bbox_coder import BaseBBoxCoder
 
 @BBOX_CODERS.register_module()
 class BucketingBBoxCoder(BaseBBoxCoder):
-    """Bucketing BBox Coder for Side-Aware Bounday Localization (SABL).
+    """Bucketing BBox Coder for Side-Aware Boundary Localization (SABL).
 
     Boundary Localization with Bucketing and Bucketing Guided Rescoring
     are implemented here.
@@ -90,6 +92,7 @@ class BucketingBBoxCoder(BaseBBoxCoder):
         return decoded_bboxes
 
 
+@mmcv.jit(coderize=True)
 def generat_buckets(proposals, num_buckets, scale_factor=1.0):
     """Generate buckets w.r.t bucket number and scale factor of proposals.
 
@@ -138,6 +141,7 @@ def generat_buckets(proposals, num_buckets, scale_factor=1.0):
     return bucket_w, bucket_h, l_buckets, r_buckets, t_buckets, d_buckets
 
 
+@mmcv.jit(coderize=True)
 def bbox2bucket(proposals,
                 gt,
                 num_buckets,
@@ -192,7 +196,7 @@ def bbox2bucket(proposals,
     t_offsets = (t_buckets - gy1[:, None]) / bucket_h[:, None]
     d_offsets = (d_buckets - gy2[:, None]) / bucket_h[:, None]
 
-    # select top-k nearset buckets
+    # select top-k nearest buckets
     l_topk, l_label = l_offsets.abs().topk(
         offset_topk, dim=1, largest=False, sorted=True)
     r_topk, r_label = r_offsets.abs().topk(
@@ -208,7 +212,7 @@ def bbox2bucket(proposals,
     offset_d_weights = d_offsets.new_zeros(d_offsets.size())
     inds = torch.arange(0, proposals.size(0)).to(proposals).long()
 
-    # generate offset weights of top-k nearset buckets
+    # generate offset weights of top-k nearest buckets
     for k in range(offset_topk):
         if k >= 1:
             offset_l_weights[inds, l_label[:,
@@ -252,7 +256,7 @@ def bbox2bucket(proposals,
         bucket_cls_d_weights
     ],
                                    dim=-1)
-    # ignore second nearest buckets for cls if necessay
+    # ignore second nearest buckets for cls if necessary
     if cls_ignore_neighbor:
         bucket_cls_weights = (~((bucket_cls_weights == 1) &
                                 (bucket_labels == 0))).float()
@@ -261,6 +265,7 @@ def bbox2bucket(proposals,
     return offsets, offsets_weights, bucket_labels, bucket_cls_weights
 
 
+@mmcv.jit(coderize=True)
 def bucket2bbox(proposals,
                 cls_preds,
                 offset_preds,

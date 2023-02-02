@@ -1,29 +1,22 @@
+# Copyright (c) OpenMMLab. All rights reserved.
+import contextlib
+import io
 import itertools
 import logging
 import os.path as osp
 import tempfile
+import warnings
 from collections import OrderedDict
 
 import mmcv
 import numpy as np
 from mmcv.utils import print_log
-from pycocotools.coco import COCO
-from pycocotools.cocoeval import COCOeval
 from terminaltables import AsciiTable
 
 from mmdet.core import eval_recalls
+from .api_wrappers import COCO, COCOeval
 from .builder import DATASETS
 from .custom import CustomDataset
-
-try:
-    import pycocotools
-    if not hasattr(pycocotools, '__sphinx_mock__'):  # for doc generation
-        assert pycocotools.__version__ >= '12.0.2'
-except AssertionError:
-    raise AssertionError('Incompatible version of pycocotools is installed. '
-                         'Run pip uninstall pycocotools first. Then run pip '
-                         'install mmpycocotools to install open-mmlab forked '
-                         'pycocotools.')
 
 
 @DATASETS.register_module()
@@ -44,6 +37,28 @@ class CocoDataset(CustomDataset):
                'oven', 'toaster', 'sink', 'refrigerator', 'book', 'clock',
                'vase', 'scissors', 'teddy bear', 'hair drier', 'toothbrush')
 
+    PALETTE = [(220, 20, 60), (119, 11, 32), (0, 0, 142), (0, 0, 230),
+               (106, 0, 228), (0, 60, 100), (0, 80, 100), (0, 0, 70),
+               (0, 0, 192), (250, 170, 30), (100, 170, 30), (220, 220, 0),
+               (175, 116, 175), (250, 0, 30), (165, 42, 42), (255, 77, 255),
+               (0, 226, 252), (182, 182, 255), (0, 82, 0), (120, 166, 157),
+               (110, 76, 0), (174, 57, 255), (199, 100, 0), (72, 0, 118),
+               (255, 179, 240), (0, 125, 92), (209, 0, 151), (188, 208, 182),
+               (0, 220, 176), (255, 99, 164), (92, 0, 73), (133, 129, 255),
+               (78, 180, 255), (0, 228, 0), (174, 255, 243), (45, 89, 255),
+               (134, 134, 103), (145, 148, 174), (255, 208, 186),
+               (197, 226, 255), (171, 134, 1), (109, 63, 54), (207, 138, 255),
+               (151, 0, 95), (9, 80, 61), (84, 105, 51), (74, 65, 105),
+               (166, 196, 102), (208, 195, 210), (255, 109, 65), (0, 143, 149),
+               (179, 0, 194), (209, 99, 106), (5, 121, 0), (227, 255, 205),
+               (147, 186, 208), (153, 69, 1), (3, 95, 161), (163, 255, 0),
+               (119, 0, 170), (0, 182, 199), (0, 165, 120), (183, 130, 88),
+               (95, 32, 0), (130, 114, 135), (110, 129, 133), (166, 74, 118),
+               (219, 142, 185), (79, 210, 114), (178, 90, 62), (65, 70, 15),
+               (127, 167, 115), (59, 105, 106), (142, 108, 45), (196, 172, 0),
+               (95, 54, 80), (128, 76, 255), (201, 57, 1), (246, 0, 122),
+               (191, 162, 208)]
+
     def load_annotations(self, ann_file):
         """Load annotation from COCO style annotation file.
 
@@ -55,41 +70,22 @@ class CocoDataset(CustomDataset):
         """
 
         self.coco = COCO(ann_file)
-        # print(self.cat2label)
-        self.img_ids = self.coco.get_img_ids()
-        self.ignore_ids_train = [4, 5, 9, 10, 11, 12, 15, 16, 19, 20, 25, 27, 31, 32, 34, 35, 36, 38, 40, 41, 43, 52, 55, 57, 58, 60, 66, 67, 71, 76, 77, 78]
-        self.ignore_ids_test = [9, 10, 11, 12, 32, 34, 35, 38, 40, 52, 58, 60, 67, 77, 78]
-        CLASSES_for_evaluate = []
-        if self.test_mode:
-            for id in range(len(self.CLASSES)):
-                if id not in self.ignore_ids_test:
-                    CLASSES_for_evaluate.append(self.CLASSES[id])
-            self.cat_ids_for_evaluate = self.coco.get_cat_ids(cat_names=CLASSES_for_evaluate)
+        # The order of returned `cat_ids` will not
+        # change with the order of the CLASSES
         self.cat_ids = self.coco.get_cat_ids(cat_names=self.CLASSES)
+
         self.cat2label = {cat_id: i for i, cat_id in enumerate(self.cat_ids)}
-        self.ignore_cats = []
-        cats = {}
-        # self.img_ids = self.img_ids[:50]
-        if self.test_mode:
-            for cat in self.coco.cats:
-                if cat in self.cat_ids and self.cat2label[cat] not in self.ignore_ids_test:
-                    cats[cat] = self.coco.cats[cat]
-                else:
-                    self.ignore_cats.append(cat)
-            self.coco.cats = cats
-        else:
-            for cat in self.coco.cats:
-                if self.cat2label[cat] not in self.ignore_ids_train:
-                    cats[cat] = self.coco.cats[cat]
-                else:
-                    self.ignore_cats.append(cat)
-        # self.img_ids = self.img_ids[:50]
-            # self.coco.cats = cats
+        self.img_ids = self.coco.get_img_ids()
         data_infos = []
+        total_ann_ids = []
         for i in self.img_ids:
             info = self.coco.load_imgs([i])[0]
             info['filename'] = info['file_name']
             data_infos.append(info)
+            ann_ids = self.coco.get_ann_ids(img_ids=[i])
+            total_ann_ids.extend(ann_ids)
+        assert len(set(total_ann_ids)) == len(
+            total_ann_ids), f"Annotation ids in '{ann_file}' are not unique!"
         return data_infos
 
     def get_ann_info(self, idx):
@@ -165,9 +161,6 @@ class CocoDataset(CustomDataset):
         for i, ann in enumerate(ann_info):
             if ann.get('ignore', False):
                 continue
-            if ann['category_id'] in self.ignore_cats:
-                # print('ignore {}'.format(ann['category_id']))
-                continue
             x1, y1, w, h = ann['bbox']
             inter_w = max(0, min(x1 + w, img_info['width']) - max(x1, 0))
             inter_h = max(0, min(y1 + h, img_info['height']) - max(y1, 0))
@@ -197,7 +190,7 @@ class CocoDataset(CustomDataset):
         else:
             gt_bboxes_ignore = np.zeros((0, 4), dtype=np.float32)
 
-        seg_map = img_info['filename'].replace('jpg', 'png')
+        seg_map = img_info['filename'].rsplit('.', 1)[0] + self.seg_suffix
 
         ann = dict(
             bboxes=gt_bboxes,
@@ -275,10 +268,7 @@ class CocoDataset(CustomDataset):
                     data['image_id'] = img_id
                     data['bbox'] = self.xyxy2xywh(bboxes[i])
                     data['score'] = float(bboxes[i][4])
-                    try:
-                        data['category_id'] = self.cat_ids[label]
-                    except:
-                        print(label)
+                    data['category_id'] = self.cat_ids[label]
                     bbox_json_results.append(data)
 
                 # segm results
@@ -393,26 +383,28 @@ class CocoDataset(CustomDataset):
         result_files = self.results2json(results, jsonfile_prefix)
         return result_files, tmp_dir
 
-    def evaluate(self,
-                 results,
-                 metric='bbox',
-                 logger=None,
-                 jsonfile_prefix=None,
-                 classwise=True,
-                 proposal_nums=(100, 300, 1000),
-                 iou_thrs=None,
-                 metric_items=None):
-        """Evaluation in COCO protocol.
+    def evaluate_det_segm(self,
+                          results,
+                          result_files,
+                          coco_gt,
+                          metrics,
+                          logger=None,
+                          classwise=False,
+                          proposal_nums=(100, 300, 1000),
+                          iou_thrs=None,
+                          metric_items=None):
+        """Instance segmentation and object detection evaluation in COCO
+        protocol.
 
         Args:
-            results (list[list | tuple]): Testing results of the dataset.
+            results (list[list | tuple | dict]): Testing results of the
+                dataset.
+            result_files (dict[str, str]): a dict contains json file path.
+            coco_gt (COCO): COCO API object with ground truth annotation.
             metric (str | list[str]): Metrics to be evaluated. Options are
                 'bbox', 'segm', 'proposal', 'proposal_fast'.
             logger (logging.Logger | str | None): Logger used for printing
                 related information during evaluation. Default: None.
-            jsonfile_prefix (str | None): The prefix of json files. It includes
-                the file path and the prefix of filename, e.g., "a/b/prefix".
-                If not specified, a temp file will be created. Default: None.
             classwise (bool): Whether to evaluating the AP for each class.
             proposal_nums (Sequence[int]): Proposal number used for evaluating
                 recalls, such as recall@100, recall@1000.
@@ -432,12 +424,6 @@ class CocoDataset(CustomDataset):
         Returns:
             dict[str, float]: COCO style evaluation metric.
         """
-
-        metrics = metric if isinstance(metric, list) else [metric]
-        allowed_metrics = ['bbox', 'segm', 'proposal', 'proposal_fast']
-        for metric in metrics:
-            if metric not in allowed_metrics:
-                raise KeyError(f'metric {metric} is not supported')
         if iou_thrs is None:
             iou_thrs = np.linspace(
                 .5, 0.95, int(np.round((0.95 - .5) / .05)) + 1, endpoint=True)
@@ -445,10 +431,7 @@ class CocoDataset(CustomDataset):
             if not isinstance(metric_items, list):
                 metric_items = [metric_items]
 
-        result_files, tmp_dir = self.format_results(results, jsonfile_prefix)
-
         eval_results = OrderedDict()
-        cocoGt = self.coco
         for metric in metrics:
             msg = f'Evaluating {metric}...'
             if logger is None:
@@ -456,6 +439,9 @@ class CocoDataset(CustomDataset):
             print_log(msg, logger=logger)
 
             if metric == 'proposal_fast':
+                if isinstance(results[0], tuple):
+                    raise KeyError('proposal_fast is not supported for '
+                                   'instance segmentation result.')
                 ar = self.fast_eval_recall(
                     results, proposal_nums, iou_thrs, logger='silent')
                 log_msg = []
@@ -466,10 +452,27 @@ class CocoDataset(CustomDataset):
                 print_log(log_msg, logger=logger)
                 continue
 
+            iou_type = 'bbox' if metric == 'proposal' else metric
             if metric not in result_files:
                 raise KeyError(f'{metric} is not in results')
             try:
-                cocoDt = cocoGt.loadRes(result_files[metric])
+                predictions = mmcv.load(result_files[metric])
+                if iou_type == 'segm':
+                    # Refer to https://github.com/cocodataset/cocoapi/blob/master/PythonAPI/pycocotools/coco.py#L331  # noqa
+                    # When evaluating mask AP, if the results contain bbox,
+                    # cocoapi will use the box area instead of the mask area
+                    # for calculating the instance area. Though the overall AP
+                    # is not affected, this leads to different
+                    # small/medium/large mask AP results.
+                    for x in predictions:
+                        x.pop('bbox')
+                    warnings.simplefilter('once')
+                    warnings.warn(
+                        'The key "bbox" is deleted for more accurate mask AP '
+                        'of small/medium/large instances since v2.12.0. This '
+                        'does not change the overall mAP calculation.',
+                        UserWarning)
+                coco_det = coco_gt.loadRes(predictions)
             except IndexError:
                 print_log(
                     'The testing results of the whole dataset is empty.',
@@ -477,9 +480,8 @@ class CocoDataset(CustomDataset):
                     level=logging.ERROR)
                 break
 
-            iou_type = 'bbox' if metric == 'proposal' else metric
-            cocoEval = COCOeval(cocoGt, cocoDt, iou_type)
-            cocoEval.params.catIds = self.cat_ids_for_evaluate
+            cocoEval = COCOeval(coco_gt, coco_det, iou_type)
+            cocoEval.params.catIds = self.cat_ids
             cocoEval.params.imgIds = self.img_ids
             cocoEval.params.maxDets = list(proposal_nums)
             cocoEval.params.iouThrs = iou_thrs
@@ -508,7 +510,13 @@ class CocoDataset(CustomDataset):
                 cocoEval.params.useCats = 0
                 cocoEval.evaluate()
                 cocoEval.accumulate()
-                cocoEval.summarize()
+
+                # Save coco summarize print information to logger
+                redirect_string = io.StringIO()
+                with contextlib.redirect_stdout(redirect_string):
+                    cocoEval.summarize()
+                print_log('\n' + redirect_string.getvalue(), logger=logger)
+
                 if metric_items is None:
                     metric_items = [
                         'AR@100', 'AR@300', 'AR@1000', 'AR_s@1000',
@@ -522,16 +530,22 @@ class CocoDataset(CustomDataset):
             else:
                 cocoEval.evaluate()
                 cocoEval.accumulate()
-                cocoEval.summarize()
+
+                # Save coco summarize print information to logger
+                redirect_string = io.StringIO()
+                with contextlib.redirect_stdout(redirect_string):
+                    cocoEval.summarize()
+                print_log('\n' + redirect_string.getvalue(), logger=logger)
+
                 if classwise:  # Compute per-category AP
                     # Compute per-category AP
                     # from https://github.com/facebookresearch/detectron2/
                     precisions = cocoEval.eval['precision']
                     # precision: (iou, recall, cls, area range, max dets)
-                    assert len(self.cat_ids_for_evaluate) == precisions.shape[2]
+                    assert len(self.cat_ids) == precisions.shape[2]
 
                     results_per_category = []
-                    for idx, catId in enumerate(self.cat_ids_for_evaluate):
+                    for idx, catId in enumerate(self.cat_ids):
                         # area range index 0: all area ranges
                         # max dets index -1: typically 100 per image
                         nm = self.coco.loadCats(catId)[0]
@@ -572,6 +586,64 @@ class CocoDataset(CustomDataset):
                 eval_results[f'{metric}_mAP_copypaste'] = (
                     f'{ap[0]:.3f} {ap[1]:.3f} {ap[2]:.3f} {ap[3]:.3f} '
                     f'{ap[4]:.3f} {ap[5]:.3f}')
+
+        return eval_results
+
+    def evaluate(self,
+                 results,
+                 metric='bbox',
+                 logger=None,
+                 jsonfile_prefix=None,
+                 classwise=False,
+                 proposal_nums=(100, 300, 1000),
+                 iou_thrs=None,
+                 metric_items=None):
+        """Evaluation in COCO protocol.
+
+        Args:
+            results (list[list | tuple]): Testing results of the dataset.
+            metric (str | list[str]): Metrics to be evaluated. Options are
+                'bbox', 'segm', 'proposal', 'proposal_fast'.
+            logger (logging.Logger | str | None): Logger used for printing
+                related information during evaluation. Default: None.
+            jsonfile_prefix (str | None): The prefix of json files. It includes
+                the file path and the prefix of filename, e.g., "a/b/prefix".
+                If not specified, a temp file will be created. Default: None.
+            classwise (bool): Whether to evaluating the AP for each class.
+            proposal_nums (Sequence[int]): Proposal number used for evaluating
+                recalls, such as recall@100, recall@1000.
+                Default: (100, 300, 1000).
+            iou_thrs (Sequence[float], optional): IoU threshold used for
+                evaluating recalls/mAPs. If set to a list, the average of all
+                IoUs will also be computed. If not specified, [0.50, 0.55,
+                0.60, 0.65, 0.70, 0.75, 0.80, 0.85, 0.90, 0.95] will be used.
+                Default: None.
+            metric_items (list[str] | str, optional): Metric items that will
+                be returned. If not specified, ``['AR@100', 'AR@300',
+                'AR@1000', 'AR_s@1000', 'AR_m@1000', 'AR_l@1000' ]`` will be
+                used when ``metric=='proposal'``, ``['mAP', 'mAP_50', 'mAP_75',
+                'mAP_s', 'mAP_m', 'mAP_l']`` will be used when
+                ``metric=='bbox' or metric=='segm'``.
+
+        Returns:
+            dict[str, float]: COCO style evaluation metric.
+        """
+
+        metrics = metric if isinstance(metric, list) else [metric]
+        allowed_metrics = ['bbox', 'segm', 'proposal', 'proposal_fast']
+        for metric in metrics:
+            if metric not in allowed_metrics:
+                raise KeyError(f'metric {metric} is not supported')
+
+        coco_gt = self.coco
+        self.cat_ids = coco_gt.get_cat_ids(cat_names=self.CLASSES)
+
+        result_files, tmp_dir = self.format_results(results, jsonfile_prefix)
+        eval_results = self.evaluate_det_segm(results, result_files, coco_gt,
+                                              metrics, logger, classwise,
+                                              proposal_nums, iou_thrs,
+                                              metric_items)
+
         if tmp_dir is not None:
             tmp_dir.cleanup()
         return eval_results
