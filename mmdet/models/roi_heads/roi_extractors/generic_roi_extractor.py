@@ -1,4 +1,3 @@
-# Copyright (c) OpenMMLab. All rights reserved.
 from mmcv.cnn.bricks import build_plugin_layer
 from mmcv.runner import force_fp32
 
@@ -68,7 +67,7 @@ class GenericRoIExtractor(BaseRoIExtractor):
                 roi_feats_t = self.pre_module(roi_feats_t)
             if self.aggregation == 'sum':
                 # and sum them all
-                roi_feats = roi_feats + roi_feats_t
+                roi_feats += roi_feats_t
             else:
                 # and concat them along channel dimension
                 roi_feats[:, start_channels:end_channels] = roi_feats_t

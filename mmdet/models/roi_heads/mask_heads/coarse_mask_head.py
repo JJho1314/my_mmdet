@@ -1,6 +1,6 @@
-# Copyright (c) OpenMMLab. All rights reserved.
-from mmcv.cnn import ConvModule, Linear
-from mmcv.runner import ModuleList, auto_fp16
+import torch.nn as nn
+from mmcv.cnn import ConvModule, Linear, constant_init, xavier_init
+from mmcv.runner import auto_fp16
 
 from mmdet.models.builder import HEADS
 from .fcn_mask_head import FCNMaskHead
@@ -20,7 +20,6 @@ class CoarseMaskHead(FCNMaskHead):
             Default: 1024.
         downsample_factor (int): The factor that feature map is downsampled by.
             Default: 2.
-        init_cfg (dict or list[dict], optional): Initialization config dict.
     """
 
     def __init__(self,
@@ -28,21 +27,10 @@ class CoarseMaskHead(FCNMaskHead):
                  num_fcs=2,
                  fc_out_channels=1024,
                  downsample_factor=2,
-                 init_cfg=dict(
-                     type='Xavier',
-                     override=[
-                         dict(name='fcs'),
-                         dict(type='Constant', val=0.001, name='fc_logits')
-                     ]),
                  *arg,
                  **kwarg):
         super(CoarseMaskHead, self).__init__(
-            *arg,
-            num_convs=num_convs,
-            upsample_cfg=dict(type=None),
-            init_cfg=None,
-            **kwarg)
-        self.init_cfg = init_cfg
+            *arg, num_convs=num_convs, upsample_cfg=dict(type=None), **kwarg)
         self.num_fcs = num_fcs
         assert self.num_fcs > 0
         self.fc_out_channels = fc_out_channels
@@ -72,7 +60,7 @@ class CoarseMaskHead(FCNMaskHead):
 
         last_layer_dim = self.conv_out_channels * self.output_area
 
-        self.fcs = ModuleList()
+        self.fcs = nn.ModuleList()
         for i in range(num_fcs):
             fc_in_channels = (
                 last_layer_dim if i == 0 else self.fc_out_channels)
@@ -82,7 +70,10 @@ class CoarseMaskHead(FCNMaskHead):
         self.fc_logits = Linear(last_layer_dim, output_channels)
 
     def init_weights(self):
-        super(FCNMaskHead, self).init_weights()
+        for m in self.fcs.modules():
+            if isinstance(m, nn.Linear):
+                xavier_init(m)
+        constant_init(self.fc_logits, 0.001)
 
     @auto_fp16()
     def forward(self, x):

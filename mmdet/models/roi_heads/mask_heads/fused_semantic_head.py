@@ -1,16 +1,13 @@
-# Copyright (c) OpenMMLab. All rights reserved.
-import warnings
-
 import torch.nn as nn
 import torch.nn.functional as F
-from mmcv.cnn import ConvModule
-from mmcv.runner import BaseModule, auto_fp16, force_fp32
+from mmcv.cnn import ConvModule, kaiming_init
+from mmcv.runner import auto_fp16, force_fp32
 
-from mmdet.models.builder import HEADS, build_loss
+from mmdet.models.builder import HEADS
 
 
 @HEADS.register_module()
-class FusedSemanticHead(BaseModule):
+class FusedSemanticHead(nn.Module):
     r"""Multi-level fused semantic segmentation head.
 
     .. code-block:: none
@@ -33,23 +30,19 @@ class FusedSemanticHead(BaseModule):
                  in_channels=256,
                  conv_out_channels=256,
                  num_classes=183,
+                 ignore_label=255,
+                 loss_weight=0.2,
                  conv_cfg=None,
-                 norm_cfg=None,
-                 ignore_label=None,
-                 loss_weight=None,
-                 loss_seg=dict(
-                     type='CrossEntropyLoss',
-                     ignore_index=255,
-                     loss_weight=0.2),
-                 init_cfg=dict(
-                     type='Kaiming', override=dict(name='conv_logits'))):
-        super(FusedSemanticHead, self).__init__(init_cfg)
+                 norm_cfg=None):
+        super(FusedSemanticHead, self).__init__()
         self.num_ins = num_ins
         self.fusion_level = fusion_level
         self.num_convs = num_convs
         self.in_channels = in_channels
         self.conv_out_channels = conv_out_channels
         self.num_classes = num_classes
+        self.ignore_label = ignore_label
+        self.loss_weight = loss_weight
         self.conv_cfg = conv_cfg
         self.norm_cfg = norm_cfg
         self.fp16_enabled = False
@@ -83,15 +76,11 @@ class FusedSemanticHead(BaseModule):
             conv_cfg=self.conv_cfg,
             norm_cfg=self.norm_cfg)
         self.conv_logits = nn.Conv2d(conv_out_channels, self.num_classes, 1)
-        if ignore_label:
-            loss_seg['ignore_index'] = ignore_label
-        if loss_weight:
-            loss_seg['loss_weight'] = loss_weight
-        if ignore_label or loss_weight:
-            warnings.warn('``ignore_label`` and ``loss_weight`` would be '
-                          'deprecated soon. Please set ``ingore_index`` and '
-                          '``loss_weight`` in ``loss_seg`` instead.')
-        self.criterion = build_loss(loss_seg)
+
+        self.criterion = nn.CrossEntropyLoss(ignore_index=ignore_label)
+
+    def init_weights(self):
+        kaiming_init(self.conv_logits)
 
     @auto_fp16()
     def forward(self, feats):
@@ -101,8 +90,7 @@ class FusedSemanticHead(BaseModule):
             if i != self.fusion_level:
                 feat = F.interpolate(
                     feat, size=fused_size, mode='bilinear', align_corners=True)
-                # fix runtime error of "+=" inplace operation in PyTorch 1.10
-                x = x + self.lateral_convs[i](feat)
+                x += self.lateral_convs[i](feat)
 
         for i in range(self.num_convs):
             x = self.convs[i](x)
@@ -115,4 +103,5 @@ class FusedSemanticHead(BaseModule):
     def loss(self, mask_pred, labels):
         labels = labels.squeeze(1).long()
         loss_semantic_seg = self.criterion(mask_pred, labels)
+        loss_semantic_seg *= self.loss_weight
         return loss_semantic_seg
