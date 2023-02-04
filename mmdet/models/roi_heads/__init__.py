@@ -12,6 +12,7 @@ from .roi_extractors import (BaseRoIExtractor, GenericRoIExtractor,
                              SingleRoIExtractor)
 from .shared_heads import ResLayer
 from .standard_roi_head import StandardRoIHead
+from .standard_roi_head_text import StandardRoIHeadTEXT
 
 
 __all__ = [
@@ -23,5 +24,5 @@ __all__ = [
     'MaskIoUHead', 'BaseRoIExtractor', 'GenericRoIExtractor',
     'SingleRoIExtractor', 'MaskPointHead',
     'CoarseMaskHead', 'SCNetMaskHead', 'SCNetSemanticHead', 'SCNetBBoxHead',
-    'FeatureRelayHead', 'GlobalContextHead'
+    'FeatureRelayHead', 'GlobalContextHead', 'StandardRoIHeadTEXT'
 ]
