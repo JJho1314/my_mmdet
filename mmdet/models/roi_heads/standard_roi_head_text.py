@@ -247,6 +247,9 @@ class StandardRoIHeadTEXT(BaseRoIHead, BBoxTestMixin, MaskTestMixin):
 
         return losses
 
+
+
+
     def _bbox_forward(self, x, rois):
         """Box head forward function used in both training and testing."""
         # TODO: a more flexible way to decide which feature maps to use

@@ -1,15 +1,19 @@
+# Copyright (c) OpenMMLab. All rights reserved.
 # Modified from https://github.com/facebookresearch/detectron2/tree/master/projects/PointRend/point_head/point_head.py  # noqa
 
 import torch
 import torch.nn as nn
-from mmcv.cnn import ConvModule, normal_init
+from mmcv.cnn import ConvModule
 from mmcv.ops import point_sample, rel_roi_point_to_rel_img_point
+from mmcv.runner import BaseModule
 
 from mmdet.models.builder import HEADS, build_loss
+from mmdet.models.utils import (get_uncertain_point_coords_with_randomness,
+                                get_uncertainty)
 
 
 @HEADS.register_module()
-class MaskPointHead(nn.Module):
+class MaskPointHead(BaseModule):
     """A mask point head use in PointRend.
 
     ``MaskPointHead`` use shared multi-layer perceptron (equivalent to
@@ -32,6 +36,7 @@ class MaskPointHead(nn.Module):
         loss_point (dict): Dictionary to construct and config loss layer of
             point head. Default: dict(type='CrossEntropyLoss', use_mask=True,
             loss_weight=1.0).
+        init_cfg (dict or list[dict], optional): Initialization config dict.
     """
 
     def __init__(self,
@@ -45,11 +50,14 @@ class MaskPointHead(nn.Module):
                  norm_cfg=None,
                  act_cfg=dict(type='ReLU'),
                  loss_point=dict(
-                     type='CrossEntropyLoss', use_mask=True, loss_weight=1.0)):
-        super().__init__()
+                     type='CrossEntropyLoss', use_mask=True, loss_weight=1.0),
+                 init_cfg=dict(
+                     type='Normal', std=0.001,
+                     override=dict(name='fc_logits'))):
+        super().__init__(init_cfg)
         self.num_fcs = num_fcs
         self.in_channels = in_channels
-        self.fc_channles = fc_channels
+        self.fc_channels = fc_channels
         self.num_classes = num_classes
         self.class_agnostic = class_agnostic
         self.coarse_pred_each_layer = coarse_pred_each_layer
@@ -76,11 +84,6 @@ class MaskPointHead(nn.Module):
         out_channels = 1 if self.class_agnostic else self.num_classes
         self.fc_logits = nn.Conv1d(
             fc_in_channels, out_channels, kernel_size=1, stride=1, padding=0)
-
-    def init_weights(self):
-        """Initialize last classification layer of MaskPointHead, conv layers
-        are already initialized by ConvModule."""
-        normal_init(self.fc_logits, std=0.001)
 
     def forward(self, fine_grained_feats, coarse_feats):
         """Classify each point base on fine grained and coarse feats.
@@ -154,7 +157,7 @@ class MaskPointHead(nn.Module):
                     0, pos_assigned_gt_inds))
             gt_masks_th = gt_masks_th.unsqueeze(1)
             rel_img_points = rel_roi_point_to_rel_img_point(
-                rois, rel_roi_points, gt_masks_th.shape[2:])
+                rois, rel_roi_points, gt_masks_th)
             point_targets = point_sample(gt_masks_th,
                                          rel_img_points).squeeze(1)
         else:
@@ -184,31 +187,6 @@ class MaskPointHead(nn.Module):
         loss['loss_point'] = loss_point
         return loss
 
-    def _get_uncertainty(self, mask_pred, labels):
-        """Estimate uncertainty based on pred logits.
-
-        We estimate uncertainty as L1 distance between 0.0 and the logits
-        prediction in 'mask_pred' for the foreground class in `classes`.
-
-        Args:
-            mask_pred (Tensor): mask predication logits, shape (num_rois,
-                num_classes, mask_height, mask_width).
-
-            labels (list[Tensor]): Either predicted or ground truth label for
-                each predicted mask, of length num_rois.
-
-        Returns:
-            scores (Tensor): Uncertainty scores with the most uncertain
-                locations having the highest uncertainty score,
-                shape (num_rois, 1, mask_height, mask_width)
-        """
-        if mask_pred.shape[1] == 1:
-            gt_class_logits = mask_pred.clone()
-        else:
-            inds = torch.arange(mask_pred.shape[0], device=mask_pred.device)
-            gt_class_logits = mask_pred[inds, labels].unsqueeze(1)
-        return -torch.abs(gt_class_logits)
-
     def get_roi_rel_points_train(self, mask_pred, labels, cfg):
         """Get ``num_points`` most uncertain points with random points during
         train.
@@ -229,39 +207,9 @@ class MaskPointHead(nn.Module):
             point_coords (Tensor): A tensor of shape (num_rois, num_points, 2)
                 that contains the coordinates sampled points.
         """
-        num_points = cfg.num_points
-        oversample_ratio = cfg.oversample_ratio
-        importance_sample_ratio = cfg.importance_sample_ratio
-        assert oversample_ratio >= 1
-        assert 0 <= importance_sample_ratio <= 1
-        batch_size = mask_pred.shape[0]
-        num_sampled = int(num_points * oversample_ratio)
-        point_coords = torch.rand(
-            batch_size, num_sampled, 2, device=mask_pred.device)
-        point_logits = point_sample(mask_pred, point_coords)
-        # It is crucial to calculate uncertainty based on the sampled
-        # prediction value for the points. Calculating uncertainties of the
-        # coarse predictions first and sampling them for points leads to
-        # incorrect results.  To illustrate this: assume uncertainty func(
-        # logits)=-abs(logits), a sampled point between two coarse
-        # predictions with -1 and 1 logits has 0 logits, and therefore 0
-        # uncertainty value. However, if we calculate uncertainties for the
-        # coarse predictions first, both will have -1 uncertainty,
-        # and sampled point will get -1 uncertainty.
-        point_uncertainties = self._get_uncertainty(point_logits, labels)
-        num_uncertain_points = int(importance_sample_ratio * num_points)
-        num_random_points = num_points - num_uncertain_points
-        idx = torch.topk(
-            point_uncertainties[:, 0, :], k=num_uncertain_points, dim=1)[1]
-        shift = num_sampled * torch.arange(
-            batch_size, dtype=torch.long, device=mask_pred.device)
-        idx += shift[:, None]
-        point_coords = point_coords.view(-1, 2)[idx.view(-1), :].view(
-            batch_size, num_uncertain_points, 2)
-        if num_random_points > 0:
-            rand_roi_coords = torch.rand(
-                batch_size, num_random_points, 2, device=mask_pred.device)
-            point_coords = torch.cat((point_coords, rand_roi_coords), dim=1)
+        point_coords = get_uncertain_point_coords_with_randomness(
+            mask_pred, labels, cfg.num_points, cfg.oversample_ratio,
+            cfg.importance_sample_ratio)
         return point_coords
 
     def get_roi_rel_points_test(self, mask_pred, pred_label, cfg):
@@ -283,18 +231,23 @@ class MaskPointHead(nn.Module):
                 most uncertain points from the [mask_height, mask_width] grid .
         """
         num_points = cfg.subdivision_num_points
-        uncertainty_map = self._get_uncertainty(mask_pred, pred_label)
+        uncertainty_map = get_uncertainty(mask_pred, pred_label)
         num_rois, _, mask_height, mask_width = uncertainty_map.shape
-        h_step = 1.0 / mask_height
-        w_step = 1.0 / mask_width
 
-        uncertainty_map = uncertainty_map.view(num_rois,
-                                               mask_height * mask_width)
-        num_points = min(mask_height * mask_width, num_points)
+        # During ONNX exporting, the type of each elements of 'shape' is
+        # `Tensor(float)`, while it is `float` during PyTorch inference.
+        if isinstance(mask_height, torch.Tensor):
+            h_step = 1.0 / mask_height.float()
+            w_step = 1.0 / mask_width.float()
+        else:
+            h_step = 1.0 / mask_height
+            w_step = 1.0 / mask_width
+        # cast to int to avoid dynamic K for TopK op in ONNX
+        mask_size = int(mask_height * mask_width)
+        uncertainty_map = uncertainty_map.view(num_rois, mask_size)
+        num_points = min(mask_size, num_points)
         point_indices = uncertainty_map.topk(num_points, dim=1)[1]
-        point_coords = uncertainty_map.new_zeros(num_rois, num_points, 2)
-        point_coords[:, :, 0] = w_step / 2.0 + (point_indices %
-                                                mask_width).float() * w_step
-        point_coords[:, :, 1] = h_step / 2.0 + (point_indices //
-                                                mask_width).float() * h_step
+        xs = w_step / 2.0 + (point_indices % mask_width).float() * w_step
+        ys = h_step / 2.0 + (point_indices // mask_width).float() * h_step
+        point_coords = torch.stack([xs, ys], dim=2)
         return point_indices, point_coords
