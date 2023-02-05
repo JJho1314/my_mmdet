@@ -1,4 +1,4 @@
-# Copyright (c) OpenMMLab. All rights reserved.
+# Copyright (c) OpenMMLab. All rights reserved.ConvFCBBoxHead
 import torch.nn as nn
 from mmcv.cnn import ConvModule
 

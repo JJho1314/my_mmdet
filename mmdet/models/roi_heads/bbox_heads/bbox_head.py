@@ -255,7 +255,6 @@ class BBoxHead(BaseModule):
 
     @force_fp32(apply_to=('cls_score', 'bbox_pred'))
     def loss(self,
-             cls_score,
              bbox_pred,
              rois,
              labels,
@@ -264,24 +263,16 @@ class BBoxHead(BaseModule):
              bbox_weights,
              reduction_override=None):
         losses = dict()
-        if cls_score is not None:
-            avg_factor = max(torch.sum(label_weights > 0).float().item(), 1.)
-            if cls_score.numel() > 0:
-                loss_cls_ = self.loss_cls(
-                    cls_score,
-                    labels,
-                    label_weights,
-                    avg_factor=avg_factor,
-                    reduction_override=reduction_override)
-                if isinstance(loss_cls_, dict):
-                    losses.update(loss_cls_)
-                else:
-                    losses['loss_cls'] = loss_cls_
-                if self.custom_activation:
-                    acc_ = self.loss_cls.get_accuracy(cls_score, labels)
-                    losses.update(acc_)
-                else:
-                    losses['acc'] = accuracy(cls_score, labels)
+        # if cls_score is not None:
+        #     avg_factor = max(torch.sum(label_weights > 0).float().item(), 1.)
+        #     if cls_score.numel() > 0:
+        #         losses['loss_cls'] = self.loss_cls(
+        #             cls_score,
+        #             labels,
+        #             label_weights,
+        #             avg_factor=avg_factor,
+        #             reduction_override=reduction_override)
+        #         losses['acc'] = accuracy(cls_score, labels)
         if bbox_pred is not None:
             bg_class_ind = self.num_classes
             # 0~self.num_classes-1 are FG, self.num_classes is BG
@@ -289,10 +280,6 @@ class BBoxHead(BaseModule):
             # do not perform bounding box regression for BG anymore.
             if pos_inds.any():
                 if self.reg_decoded_bbox:
-                    # When the regression loss (e.g. `IouLoss`,
-                    # `GIouLoss`, `DIouLoss`) is applied directly on
-                    # the decoded bounding boxes, it decodes the
-                    # already encoded coordinates to absolute format.
                     bbox_pred = self.bbox_coder.decode(rois[:, 1:], bbox_pred)
                 if self.reg_class_agnostic:
                     pos_bbox_pred = bbox_pred.view(
