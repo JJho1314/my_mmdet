@@ -31,6 +31,7 @@ class ConvFCBBoxHead(BBoxHead):
                  conv_cfg=None,
                  norm_cfg=None,
                  init_cfg=None,
+                 ensemble=True,
                  *args,
                  **kwargs):
         super(ConvFCBBoxHead, self).__init__(
@@ -59,6 +60,13 @@ class ConvFCBBoxHead(BBoxHead):
             self._add_conv_fc_branch(
                 self.num_shared_convs, self.num_shared_fcs, self.in_channels,
                 True)
+            
+        if ensemble:
+            self.shared_convs_for_image, self.shared_fcs_for_image, last_layer_dim_for_image = \
+                self._add_conv_fc_branch(
+                    self.num_shared_convs, self.num_shared_fcs, self.in_channels,
+                    True)
+                
         self.shared_out_channels = last_layer_dim
 
         # add cls specific branch
@@ -155,9 +163,8 @@ class ConvFCBBoxHead(BBoxHead):
                     nn.Linear(fc_in_channels, self.fc_out_channels))
             last_layer_dim = self.fc_out_channels
         return branch_convs, branch_fcs, last_layer_dim
-
-    def forward(self, x):
-        # shared part
+    
+    def forward_embedding(self,x):
         if self.num_shared_convs > 0:
             for conv in self.shared_convs:
                 x = conv(x)
@@ -170,18 +177,89 @@ class ConvFCBBoxHead(BBoxHead):
 
             for fc in self.shared_fcs:
                 x = self.relu(fc(x))
+        return x
+
+    def forward_embedding_for_image(self,x):
+        if self.num_shared_convs > 0:
+            for conv in self.shared_convs_for_image:
+                x = conv(x)
+
+        if self.num_shared_fcs > 0:
+            if self.with_avg_pool:
+                x = self.avg_pool(x)
+
+            x = x.flatten(1)
+
+            for fc in self.shared_fcs_for_image:
+                x = self.relu(fc(x))
+        return x
+
+    # def forward(self, x):
+    #     # shared part
+    #     if self.num_shared_convs > 0:
+    #         for conv in self.shared_convs:
+    #             x = conv(x)
+
+    #     if self.num_shared_fcs > 0:
+    #         if self.with_avg_pool:
+    #             x = self.avg_pool(x)
+
+    #         x = x.flatten(1)
+
+    #         for fc in self.shared_fcs:
+    #             x = self.relu(fc(x))
+    #     # separate branches
+    #     x_cls = x
+    #     x_reg = x
+
+    #     for conv in self.cls_convs:
+    #         x_cls = conv(x_cls)
+    #     if x_cls.dim() > 2:
+    #         if self.with_avg_pool:
+    #             x_cls = self.avg_pool(x_cls)
+    #         x_cls = x_cls.flatten(1)
+    #     for fc in self.cls_fcs:
+    #         x_cls = self.relu(fc(x_cls))
+
+    #     for conv in self.reg_convs:
+    #         x_reg = conv(x_reg)
+    #     if x_reg.dim() > 2:
+    #         if self.with_avg_pool:
+    #             x_reg = self.avg_pool(x_reg)
+    #         x_reg = x_reg.flatten(1)
+    #     for fc in self.reg_fcs:
+    #         x_reg = self.relu(fc(x_reg))
+
+    #     cls_score = self.fc_cls(x_cls) if self.with_cls else None
+    #     bbox_pred = self.fc_reg(x_reg) if self.with_reg else None
+    #     return cls_score, bbox_pred
+    
+    def forward(self, x):
+        # shared part
+        # if self.num_shared_convs > 0:
+        #     for conv in self.shared_convs:
+        #         x = conv(x)
+
+        # if self.num_shared_fcs > 0:
+        #     if self.with_avg_pool:
+        #         x = self.avg_pool(x)
+
+        #     x = x.flatten(1)
+
+        #     for fc in self.shared_fcs:
+        #         x = self.relu(fc(x))
         # separate branches
-        x_cls = x
+        # x_cls = x
         x_reg = x
 
-        for conv in self.cls_convs:
-            x_cls = conv(x_cls)
-        if x_cls.dim() > 2:
-            if self.with_avg_pool:
-                x_cls = self.avg_pool(x_cls)
-            x_cls = x_cls.flatten(1)
-        for fc in self.cls_fcs:
-            x_cls = self.relu(fc(x_cls))
+        # for conv in self.cls_convs:
+        #     x_cls = conv(x_cls)
+        # if x_cls.dim() > 2:
+        #     if self.with_avg_pool:
+        #         x_cls = self.avg_pool(x_cls)
+        #     x_cls = x_cls.flatten(1)
+        # for fc in self.cls_fcs:
+        #     x_cls = self.relu(fc(x_cls))
 
         for conv in self.reg_convs:
             x_reg = conv(x_reg)
@@ -192,9 +270,9 @@ class ConvFCBBoxHead(BBoxHead):
         for fc in self.reg_fcs:
             x_reg = self.relu(fc(x_reg))
 
-        cls_score = self.fc_cls(x_cls) if self.with_cls else None
+        # cls_score = self.fc_cls(x_cls) if self.with_cls else None
         bbox_pred = self.fc_reg(x_reg) if self.with_reg else None
-        return cls_score, bbox_pred
+        return  bbox_pred
 
 
 @HEADS.register_module()

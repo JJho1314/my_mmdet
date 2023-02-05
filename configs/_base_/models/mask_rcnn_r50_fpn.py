@@ -1,7 +1,6 @@
 # model settings
 model = dict(
     type='MaskRCNN',
-    pretrained = None,
     # backbone=dict(
     #     type='ResNet',
     #     depth=50,
@@ -38,7 +37,7 @@ model = dict(
             type='CrossEntropyLoss', use_sigmoid=True, loss_weight=1.0),
         loss_bbox=dict(type='L1Loss', loss_weight=1.0)),
     roi_head=dict(
-        type='StandardRoIHead',
+        type='StandardRoIHeadTEXT',
         bbox_roi_extractor=dict(
             type='SingleRoIExtractor',
             roi_layer=dict(type='RoIAlign', output_size=7, sampling_ratio=0),
