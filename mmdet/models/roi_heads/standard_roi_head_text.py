@@ -59,6 +59,10 @@ class StandardRoIHeadTEXT(StandardRoIHead):
         elif self.num_classes == 20:
             self.novel_label_ids = torch.tensor(voc_novel_label_ids, device=device)
             self.novel_index = F.pad(torch.bincount(self.novel_label_ids),(0,self.num_classes-self.novel_label_ids.max())).bool()
+        elif self.num_classes == 80:
+            self.base_label_ids = coco_base_label_ids
+            self.novel_label_ids = torch.tensor(coco_novel_label_ids, device=device)
+            self.novel_index = F.pad(torch.bincount(self.novel_label_ids),(0,self.num_classes-self.novel_label_ids.max())).bool()
         self.clip_model, self.preprocess = clip.load('ViT-B/32', device)
         self.clip_model.eval()
         # self.reporter = MemReporter(self.clip_model)
@@ -187,9 +191,6 @@ class StandardRoIHeadTEXT(StandardRoIHead):
             losses.update(mask_results['loss_mask'])
 
         return losses
-
-
-
 
     def _bbox_forward(self, x, rois):
         """Box head forward function used in both training and testing."""

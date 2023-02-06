@@ -4,9 +4,9 @@ _base_ = [
     '../_base_/schedules/schedule_1x.py', '../_base_/default_runtime.py'
 ]
 
-optimizer = dict(type='SGD', lr=0.005, momentum=0.9, weight_decay=0.000025)
+# optimizer = dict(type='SGD', lr=0.005, momentum=0.9, weight_decay=0.000025)
 # evaluation = dict(type="SubModulesDistEvalHook", interval=4000)
-evaluation = dict(interval=2,metric=['bbox', 'segm'])
+# evaluation = dict(interval=2,metric=['bbox', 'segm'])
 # model = dict(
 #     backbone=dict(
 #         type = 'Resnet50',

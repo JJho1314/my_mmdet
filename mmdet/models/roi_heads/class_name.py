@@ -298,6 +298,13 @@ Object365_CLASSES = ('Person', 'Sneakers', 'Chair', 'Other Shoes', 'Hat', 'Car',
         'Spring Rolls', 'Monkey', 'Rabbit', 'Pencil Case', 'Yak', 'Red Cabbage', 'Binoculars', 'Asparagus', 'Barbell',
         'Scallop', 'Noddles', 'Comb', 'Dumpling', 'Oyster', 'Table Tennis paddle', 'Cosmetics Brush/Eyeliner Pencil',
         'Chainsaw', 'Eraser', 'Lobster', 'Durian', 'Okra', 'Lipstick', 'Cosmetics Mirror', 'Curling', 'Table Tennis')
+
+coco_novel_label_ids = [12, 13, 16, 19, 20, 29, 30, 37, 38, 39, 41, 48, 50, 51, 62, 68, 70, 77]
+
+coco_base_label_ids = [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 14, 15, 17, 18, 21, 22, 23, 24, 25, 26, 27, 28, 31, 32, 33, 34,
+                  35, 36, 40, 42, 43, 44, 45, 46, 47, 49, 52, 53, 54, 55, 56, 57, 58, 59, 60, 61, 63, 64, 65, 66, 67,
+                  69, 71, 72, 73, 74, 75, 76, 78, 79]
+
 lvis_novel_label_ids = [12, 13, 16, 19, 20, 29, 30, 37, 38, 39, 41, 48, 50, 51, 62, 68, 70, 77, 81, 84, 92, 104, 105, 112,
                     116, 118, 122, 125, 129, 130, 135, 139, 141, 143, 146, 150, 154, 158, 160, 163, 166, 171, 178, 181,
                     195, 201, 208, 209, 213, 214, 221, 222, 230, 232, 233, 235, 236, 237, 239, 243, 244, 246, 249, 250,
