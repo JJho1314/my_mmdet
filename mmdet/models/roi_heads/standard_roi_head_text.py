@@ -227,7 +227,7 @@ class StandardRoIHeadTEXT(StandardRoIHead):
 
         text_cls_loss = F.cross_entropy(cls_score_text / self.temperature, labels, reduction='mean')
 
-        loss_bbox = self.bbox_head.loss(
+        loss_bbox = self.bbox_head.loss(None,
             bbox_results['bbox_pred'], rois,
             *bbox_targets)
         loss_bbox.update(text_cls_loss=text_cls_loss)

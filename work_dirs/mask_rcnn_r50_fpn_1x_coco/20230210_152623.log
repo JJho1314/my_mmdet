@@ -1,0 +1,404 @@
+2023-02-10 15:26:23,201 - mmdet - INFO - Environment info:
+------------------------------------------------------------
+sys.platform: linux
+Python: 3.8.16 (default, Jan 17 2023, 23:13:24) [GCC 11.2.0]
+CUDA available: True
+GPU 0,1: TITAN Xp
+CUDA_HOME: /usr/local/cuda
+NVCC: Cuda compilation tools, release 10.2, V10.2.8
+GCC: gcc (Ubuntu 7.5.0-3ubuntu1~18.04) 7.5.0
+PyTorch: 1.7.0
+PyTorch compiling details: PyTorch built with:
+  - GCC 7.3
+  - C++ Version: 201402
+  - Intel(R) Math Kernel Library Version 2020.0.0 Product Build 20191122 for Intel(R) 64 architecture applications
+  - Intel(R) MKL-DNN v1.6.0 (Git Hash 5ef631a030a6f73131c77892041042805a06064f)
+  - OpenMP 201511 (a.k.a. OpenMP 4.5)
+  - NNPACK is enabled
+  - CPU capability usage: AVX2
+  - CUDA Runtime 10.2
+  - NVCC architecture flags: -gencode;arch=compute_37,code=sm_37;-gencode;arch=compute_50,code=sm_50;-gencode;arch=compute_60,code=sm_60;-gencode;arch=compute_70,code=sm_70;-gencode;arch=compute_75,code=sm_75
+  - CuDNN 7.6.5
+  - Magma 2.5.2
+  - Build settings: BLAS=MKL, BUILD_TYPE=Release, CXX_FLAGS= -Wno-deprecated -fvisibility-inlines-hidden -DUSE_PTHREADPOOL -fopenmp -DNDEBUG -DUSE_FBGEMM -DUSE_QNNPACK -DUSE_PYTORCH_QNNPACK -DUSE_XNNPACK -DUSE_VULKAN_WRAPPER -O2 -fPIC -Wno-narrowing -Wall -Wextra -Werror=return-type -Wno-missing-field-initializers -Wno-type-limits -Wno-array-bounds -Wno-unknown-pragmas -Wno-sign-compare -Wno-unused-parameter -Wno-unused-variable -Wno-unused-function -Wno-unused-result -Wno-unused-local-typedefs -Wno-strict-overflow -Wno-strict-aliasing -Wno-error=deprecated-declarations -Wno-stringop-overflow -Wno-psabi -Wno-error=pedantic -Wno-error=redundant-decls -Wno-error=old-style-cast -fdiagnostics-color=always -faligned-new -Wno-unused-but-set-variable -Wno-maybe-uninitialized -fno-math-errno -fno-trapping-math -Werror=format -Wno-stringop-overflow, PERF_WITH_AVX=1, PERF_WITH_AVX2=1, PERF_WITH_AVX512=1, USE_CUDA=ON, USE_EXCEPTION_PTR=1, USE_GFLAGS=OFF, USE_GLOG=OFF, USE_MKL=ON, USE_MKLDNN=ON, USE_MPI=OFF, USE_NCCL=ON, USE_NNPACK=ON, USE_OPENMP=ON, 
+
+TorchVision: 0.8.0
+OpenCV: 4.7.0
+MMCV: 1.7.1
+MMCV Compiler: GCC 7.3
+MMCV CUDA Compiler: 10.2
+MMDetection: 2.27.0+47a1b4a
+------------------------------------------------------------
+
+2023-02-10 15:26:24,213 - mmdet - INFO - Distributed training: True
+2023-02-10 15:26:25,174 - mmdet - INFO - Config:
+model = dict(
+    type='MaskRCNN',
+    backbone=dict(type='Resnet50', name='RN50'),
+    neck=dict(
+        type='FPN',
+        in_channels=[256, 512, 1024, 2048],
+        out_channels=256,
+        num_outs=5),
+    rpn_head=dict(
+        type='RPNHead',
+        in_channels=256,
+        feat_channels=256,
+        anchor_generator=dict(
+            type='AnchorGenerator',
+            scales=[8],
+            ratios=[0.5, 1.0, 2.0],
+            strides=[4, 8, 16, 32, 64]),
+        bbox_coder=dict(
+            type='DeltaXYWHBBoxCoder',
+            target_means=[0.0, 0.0, 0.0, 0.0],
+            target_stds=[1.0, 1.0, 1.0, 1.0]),
+        loss_cls=dict(
+            type='CrossEntropyLoss', use_sigmoid=True, loss_weight=1.0),
+        loss_bbox=dict(type='L1Loss', loss_weight=1.0)),
+    roi_head=dict(
+        type='StandardRoIHead',
+        bbox_roi_extractor=dict(
+            type='SingleRoIExtractor',
+            roi_layer=dict(type='RoIAlign', output_size=7, sampling_ratio=0),
+            out_channels=256,
+            featmap_strides=[4, 8, 16, 32]),
+        bbox_head=dict(
+            type='Shared2FCBBoxHead',
+            in_channels=256,
+            fc_out_channels=1024,
+            roi_feat_size=7,
+            num_classes=80,
+            bbox_coder=dict(
+                type='DeltaXYWHBBoxCoder',
+                target_means=[0.0, 0.0, 0.0, 0.0],
+                target_stds=[0.1, 0.1, 0.2, 0.2]),
+            reg_class_agnostic=False,
+            loss_cls=dict(
+                type='CrossEntropyLoss', use_sigmoid=False, loss_weight=1.0),
+            loss_bbox=dict(type='L1Loss', loss_weight=1.0)),
+        mask_roi_extractor=dict(
+            type='SingleRoIExtractor',
+            roi_layer=dict(type='RoIAlign', output_size=14, sampling_ratio=0),
+            out_channels=256,
+            featmap_strides=[4, 8, 16, 32]),
+        mask_head=dict(
+            type='FCNMaskHead',
+            num_convs=4,
+            in_channels=256,
+            conv_out_channels=256,
+            num_classes=80,
+            loss_mask=dict(
+                type='CrossEntropyLoss', use_mask=True, loss_weight=1.0))),
+    train_cfg=dict(
+        rpn=dict(
+            assigner=dict(
+                type='MaxIoUAssigner',
+                pos_iou_thr=0.7,
+                neg_iou_thr=0.3,
+                min_pos_iou=0.3,
+                match_low_quality=True,
+                ignore_iof_thr=-1),
+            sampler=dict(
+                type='RandomSampler',
+                num=256,
+                pos_fraction=0.5,
+                neg_pos_ub=-1,
+                add_gt_as_proposals=False),
+            allowed_border=-1,
+            pos_weight=-1,
+            debug=False),
+        rpn_proposal=dict(
+            nms_pre=2000,
+            max_per_img=1000,
+            nms=dict(type='nms', iou_threshold=0.7),
+            min_bbox_size=0),
+        rcnn=dict(
+            assigner=dict(
+                type='MaxIoUAssigner',
+                pos_iou_thr=0.5,
+                neg_iou_thr=0.5,
+                min_pos_iou=0.5,
+                match_low_quality=True,
+                ignore_iof_thr=-1),
+            sampler=dict(
+                type='RandomSampler',
+                num=512,
+                pos_fraction=0.25,
+                neg_pos_ub=-1,
+                add_gt_as_proposals=True),
+            mask_size=28,
+            pos_weight=-1,
+            debug=False)),
+    test_cfg=dict(
+        rpn=dict(
+            nms_pre=1000,
+            max_per_img=1000,
+            nms=dict(type='nms', iou_threshold=0.7),
+            min_bbox_size=0),
+        rcnn=dict(
+            score_thr=0.05,
+            nms=dict(type='nms', iou_threshold=0.5),
+            max_per_img=100,
+            mask_thr_binary=0.5)))
+dataset_type = 'CocoDataset'
+data_root = '/home/work/workspace/CV/data/coco/'
+img_norm_cfg = dict(
+    mean=[123.675, 116.28, 103.53], std=[58.395, 57.12, 57.375], to_rgb=True)
+train_pipeline = [
+    dict(type='LoadImageFromFile'),
+    dict(type='LoadAnnotations', with_bbox=True, with_mask=True),
+    dict(type='Resize', img_scale=(1024, 1024), keep_ratio=True),
+    dict(type='RandomFlip', flip_ratio=0.5),
+    dict(
+        type='Normalize',
+        mean=[123.675, 116.28, 103.53],
+        std=[58.395, 57.12, 57.375],
+        to_rgb=True),
+    dict(type='Pad', size_divisor=32),
+    dict(type='DefaultFormatBundle'),
+    dict(type='Collect', keys=['img', 'gt_bboxes', 'gt_labels', 'gt_masks'])
+]
+test_pipeline = [
+    dict(type='LoadImageFromFile'),
+    dict(
+        type='MultiScaleFlipAug',
+        img_scale=(1024, 1024),
+        flip=False,
+        transforms=[
+            dict(type='Resize', keep_ratio=True),
+            dict(type='RandomFlip'),
+            dict(
+                type='Normalize',
+                mean=[123.675, 116.28, 103.53],
+                std=[58.395, 57.12, 57.375],
+                to_rgb=True),
+            dict(type='Pad', size_divisor=32),
+            dict(type='ImageToTensor', keys=['img']),
+            dict(type='Collect', keys=['img'])
+        ])
+]
+data = dict(
+    samples_per_gpu=4,
+    workers_per_gpu=8,
+    train=dict(
+        type='CocoDataset',
+        ann_file=
+        '/home/work/workspace/CV/data/coco/annotations/instances_train2017.json',
+        img_prefix='/home/work/workspace/CV/data/coco/train2017/',
+        pipeline=[
+            dict(type='LoadImageFromFile'),
+            dict(type='LoadAnnotations', with_bbox=True, with_mask=True),
+            dict(type='Resize', img_scale=(1024, 1024), keep_ratio=True),
+            dict(type='RandomFlip', flip_ratio=0.5),
+            dict(
+                type='Normalize',
+                mean=[123.675, 116.28, 103.53],
+                std=[58.395, 57.12, 57.375],
+                to_rgb=True),
+            dict(type='Pad', size_divisor=32),
+            dict(type='DefaultFormatBundle'),
+            dict(
+                type='Collect',
+                keys=['img', 'gt_bboxes', 'gt_labels', 'gt_masks'])
+        ]),
+    val=dict(
+        type='CocoDataset',
+        ann_file=
+        '/home/work/workspace/CV/data/coco/annotations/instances_val2017.json',
+        img_prefix='/home/work/workspace/CV/data/coco/val2017/',
+        pipeline=[
+            dict(type='LoadImageFromFile'),
+            dict(
+                type='MultiScaleFlipAug',
+                img_scale=(1024, 1024),
+                flip=False,
+                transforms=[
+                    dict(type='Resize', keep_ratio=True),
+                    dict(type='RandomFlip'),
+                    dict(
+                        type='Normalize',
+                        mean=[123.675, 116.28, 103.53],
+                        std=[58.395, 57.12, 57.375],
+                        to_rgb=True),
+                    dict(type='Pad', size_divisor=32),
+                    dict(type='ImageToTensor', keys=['img']),
+                    dict(type='Collect', keys=['img'])
+                ])
+        ]),
+    test=dict(
+        type='CocoDataset',
+        ann_file=
+        '/home/work/workspace/CV/data/coco/annotations/instances_val2017.json',
+        img_prefix='/home/work/workspace/CV/data/coco/test2017/',
+        pipeline=[
+            dict(type='LoadImageFromFile'),
+            dict(
+                type='MultiScaleFlipAug',
+                img_scale=(1024, 1024),
+                flip=False,
+                transforms=[
+                    dict(type='Resize', keep_ratio=True),
+                    dict(type='RandomFlip'),
+                    dict(
+                        type='Normalize',
+                        mean=[123.675, 116.28, 103.53],
+                        std=[58.395, 57.12, 57.375],
+                        to_rgb=True),
+                    dict(type='Pad', size_divisor=32),
+                    dict(type='ImageToTensor', keys=['img']),
+                    dict(type='Collect', keys=['img'])
+                ])
+        ]))
+evaluation = dict(metric=['bbox', 'segm'])
+optimizer = dict(type='SGD', lr=0.0001, momentum=0.9, weight_decay=0.0001)
+optimizer_config = dict(grad_clip=None)
+lr_config = dict(
+    policy='step',
+    warmup='linear',
+    warmup_iters=500,
+    warmup_ratio=0.001,
+    step=[8, 11])
+runner = dict(type='EpochBasedRunner', max_epochs=12)
+checkpoint_config = dict(interval=1)
+log_config = dict(interval=50, hooks=[dict(type='TextLoggerHook')])
+custom_hooks = [dict(type='NumClassCheckHook')]
+dist_params = dict(backend='nccl')
+log_level = 'INFO'
+load_from = None
+resume_from = None
+workflow = [('train', 1)]
+opencv_num_threads = 0
+mp_start_method = 'fork'
+auto_scale_lr = dict(enable=False, base_batch_size=16)
+work_dir = './work_dirs/mask_rcnn_r50_fpn_1x_coco'
+auto_resume = False
+gpu_ids = range(0, 2)
+
+2023-02-10 15:26:25,175 - mmdet - INFO - Set random seed to 0, deterministic: False
+2023-02-10 15:26:51,189 - mmdet - INFO - Automatic scaling of learning rate (LR) has been disabled.
+2023-02-10 15:26:51,917 - mmdet - INFO - Start running, host: work@work-X10SRA, work_dir: /home/work/workspace/CV/my_mmdet/work_dirs/mask_rcnn_r50_fpn_1x_coco
+2023-02-10 15:26:51,917 - mmdet - INFO - Hooks will be executed in the following order:
+before_run:
+(VERY_HIGH   ) StepLrUpdaterHook                  
+(NORMAL      ) CheckpointHook                     
+(LOW         ) DistEvalHook                       
+(VERY_LOW    ) TextLoggerHook                     
+ -------------------- 
+before_train_epoch:
+(VERY_HIGH   ) StepLrUpdaterHook                  
+(NORMAL      ) NumClassCheckHook                  
+(NORMAL      ) DistSamplerSeedHook                
+(LOW         ) IterTimerHook                      
+(LOW         ) DistEvalHook                       
+(VERY_LOW    ) TextLoggerHook                     
+ -------------------- 
+before_train_iter:
+(VERY_HIGH   ) StepLrUpdaterHook                  
+(LOW         ) IterTimerHook                      
+(LOW         ) DistEvalHook                       
+ -------------------- 
+after_train_iter:
+(ABOVE_NORMAL) OptimizerHook                      
+(NORMAL      ) CheckpointHook                     
+(LOW         ) IterTimerHook                      
+(LOW         ) DistEvalHook                       
+(VERY_LOW    ) TextLoggerHook                     
+ -------------------- 
+after_train_epoch:
+(NORMAL      ) CheckpointHook                     
+(LOW         ) DistEvalHook                       
+(VERY_LOW    ) TextLoggerHook                     
+ -------------------- 
+before_val_epoch:
+(NORMAL      ) NumClassCheckHook                  
+(NORMAL      ) DistSamplerSeedHook                
+(LOW         ) IterTimerHook                      
+(VERY_LOW    ) TextLoggerHook                     
+ -------------------- 
+before_val_iter:
+(LOW         ) IterTimerHook                      
+ -------------------- 
+after_val_iter:
+(LOW         ) IterTimerHook                      
+ -------------------- 
+after_val_epoch:
+(VERY_LOW    ) TextLoggerHook                     
+ -------------------- 
+after_run:
+(VERY_LOW    ) TextLoggerHook                     
+ -------------------- 
+2023-02-10 15:26:51,918 - mmdet - INFO - workflow: [('train', 1)], max: 12 epochs
+2023-02-10 15:26:51,918 - mmdet - INFO - Checkpoints will be saved to /home/work/workspace/CV/my_mmdet/work_dirs/mask_rcnn_r50_fpn_1x_coco by HardDiskBackend.
+2023-02-10 15:27:22,335 - mmdet - INFO - Epoch [1][50/14659]	lr: 9.890e-06, eta: 1 day, 5:35:58, time: 0.606, data_time: 0.148, memory: 3522, loss_rpn_cls: 0.6668, loss_rpn_bbox: 0.1535, loss_cls: 2.3204, acc: 65.4189, loss_bbox: 0.0099, loss_mask: 1.6926, loss: 4.8431
+2023-02-10 15:27:48,223 - mmdet - INFO - Epoch [1][100/14659]	lr: 1.988e-05, eta: 1 day, 3:25:18, time: 0.517, data_time: 0.065, memory: 3522, loss_rpn_cls: 0.6112, loss_rpn_bbox: 0.1405, loss_cls: 0.2075, acc: 98.3477, loss_bbox: 0.0122, loss_mask: 1.4050, loss: 2.3764
+2023-02-10 15:28:15,402 - mmdet - INFO - Epoch [1][150/14659]	lr: 2.987e-05, eta: 1 day, 3:07:10, time: 0.543, data_time: 0.065, memory: 3522, loss_rpn_cls: 0.5357, loss_rpn_bbox: 0.1359, loss_cls: 0.4178, acc: 97.1816, loss_bbox: 0.0641, loss_mask: 1.1710, loss: 2.3244
+2023-02-10 15:28:43,067 - mmdet - INFO - Epoch [1][200/14659]	lr: 3.986e-05, eta: 1 day, 3:05:13, time: 0.553, data_time: 0.056, memory: 3523, loss_rpn_cls: 0.4510, loss_rpn_bbox: 0.1190, loss_cls: 0.4333, acc: 96.1885, loss_bbox: 0.1126, loss_mask: 0.9583, loss: 2.0742
+2023-02-10 15:29:12,372 - mmdet - INFO - Epoch [1][250/14659]	lr: 4.985e-05, eta: 1 day, 3:22:51, time: 0.586, data_time: 0.068, memory: 3523, loss_rpn_cls: 0.3934, loss_rpn_bbox: 0.1174, loss_cls: 0.4496, acc: 95.6963, loss_bbox: 0.1327, loss_mask: 0.8999, loss: 1.9929
+2023-02-10 15:29:41,666 - mmdet - INFO - Epoch [1][300/14659]	lr: 5.984e-05, eta: 1 day, 3:34:23, time: 0.586, data_time: 0.061, memory: 3523, loss_rpn_cls: 0.3413, loss_rpn_bbox: 0.1064, loss_cls: 0.4287, acc: 95.6636, loss_bbox: 0.1387, loss_mask: 0.8539, loss: 1.8689
+2023-02-10 15:30:11,770 - mmdet - INFO - Epoch [1][350/14659]	lr: 6.983e-05, eta: 1 day, 3:49:21, time: 0.602, data_time: 0.063, memory: 3523, loss_rpn_cls: 0.3418, loss_rpn_bbox: 0.1208, loss_cls: 0.4326, acc: 95.2612, loss_bbox: 0.1503, loss_mask: 0.8345, loss: 1.8799
+2023-02-10 15:30:41,478 - mmdet - INFO - Epoch [1][400/14659]	lr: 7.982e-05, eta: 1 day, 3:57:27, time: 0.594, data_time: 0.063, memory: 3523, loss_rpn_cls: 0.3321, loss_rpn_bbox: 0.1147, loss_cls: 0.4189, acc: 95.3589, loss_bbox: 0.1458, loss_mask: 0.8189, loss: 1.8304
+2023-02-10 15:31:11,756 - mmdet - INFO - Epoch [1][450/14659]	lr: 8.981e-05, eta: 1 day, 4:07:25, time: 0.606, data_time: 0.060, memory: 3523, loss_rpn_cls: 0.3044, loss_rpn_bbox: 0.1090, loss_cls: 0.3804, acc: 95.4399, loss_bbox: 0.1451, loss_mask: 0.7881, loss: 1.7270
+2023-02-10 15:31:42,438 - mmdet - INFO - Epoch [1][500/14659]	lr: 9.980e-05, eta: 1 day, 4:17:39, time: 0.614, data_time: 0.067, memory: 3523, loss_rpn_cls: 0.2960, loss_rpn_bbox: 0.1088, loss_cls: 0.4047, acc: 95.1206, loss_bbox: 0.1573, loss_mask: 0.7734, loss: 1.7402
+2023-02-10 15:32:13,404 - mmdet - INFO - Epoch [1][550/14659]	lr: 1.000e-04, eta: 1 day, 4:27:29, time: 0.620, data_time: 0.073, memory: 3523, loss_rpn_cls: 0.3069, loss_rpn_bbox: 0.1122, loss_cls: 0.4308, acc: 94.5464, loss_bbox: 0.1782, loss_mask: 0.7655, loss: 1.7934
+2023-02-10 15:32:44,015 - mmdet - INFO - Epoch [1][600/14659]	lr: 1.000e-04, eta: 1 day, 4:33:34, time: 0.611, data_time: 0.067, memory: 3523, loss_rpn_cls: 0.3009, loss_rpn_bbox: 0.1107, loss_cls: 0.4120, acc: 94.7451, loss_bbox: 0.1717, loss_mask: 0.7630, loss: 1.7582
+2023-02-10 15:33:15,412 - mmdet - INFO - Epoch [1][650/14659]	lr: 1.000e-04, eta: 1 day, 4:42:36, time: 0.629, data_time: 0.076, memory: 3523, loss_rpn_cls: 0.3152, loss_rpn_bbox: 0.1186, loss_cls: 0.4473, acc: 94.1426, loss_bbox: 0.1917, loss_mask: 0.7586, loss: 1.8313
+2023-02-10 15:33:46,065 - mmdet - INFO - Epoch [1][700/14659]	lr: 1.000e-04, eta: 1 day, 4:46:57, time: 0.613, data_time: 0.070, memory: 3523, loss_rpn_cls: 0.2839, loss_rpn_bbox: 0.1063, loss_cls: 0.4153, acc: 94.4067, loss_bbox: 0.1840, loss_mask: 0.7485, loss: 1.7381
+2023-02-10 15:34:16,513 - mmdet - INFO - Epoch [1][750/14659]	lr: 1.000e-04, eta: 1 day, 4:49:52, time: 0.609, data_time: 0.063, memory: 3523, loss_rpn_cls: 0.2742, loss_rpn_bbox: 0.1059, loss_cls: 0.3995, acc: 94.5352, loss_bbox: 0.1806, loss_mask: 0.7377, loss: 1.6980
+2023-02-10 15:34:46,863 - mmdet - INFO - Epoch [1][800/14659]	lr: 1.000e-04, eta: 1 day, 4:51:59, time: 0.607, data_time: 0.065, memory: 3523, loss_rpn_cls: 0.2675, loss_rpn_bbox: 0.1139, loss_cls: 0.4068, acc: 94.5254, loss_bbox: 0.1839, loss_mask: 0.7422, loss: 1.7143
+2023-02-10 15:35:17,068 - mmdet - INFO - Epoch [1][850/14659]	lr: 1.000e-04, eta: 1 day, 4:53:16, time: 0.604, data_time: 0.063, memory: 3523, loss_rpn_cls: 0.2675, loss_rpn_bbox: 0.1082, loss_cls: 0.4053, acc: 94.4878, loss_bbox: 0.1837, loss_mask: 0.7307, loss: 1.6955
+2023-02-10 15:35:47,518 - mmdet - INFO - Epoch [1][900/14659]	lr: 1.000e-04, eta: 1 day, 4:55:14, time: 0.609, data_time: 0.070, memory: 3523, loss_rpn_cls: 0.2774, loss_rpn_bbox: 0.1096, loss_cls: 0.4131, acc: 94.1694, loss_bbox: 0.1938, loss_mask: 0.7297, loss: 1.7236
+2023-02-10 15:36:17,790 - mmdet - INFO - Epoch [1][950/14659]	lr: 1.000e-04, eta: 1 day, 4:56:22, time: 0.605, data_time: 0.053, memory: 3523, loss_rpn_cls: 0.2789, loss_rpn_bbox: 0.1069, loss_cls: 0.4037, acc: 94.4180, loss_bbox: 0.1820, loss_mask: 0.7241, loss: 1.6956
+2023-02-10 15:36:48,149 - mmdet - INFO - Exp name: mask_rcnn_r50_fpn_1x_coco.py
+2023-02-10 15:36:48,150 - mmdet - INFO - Epoch [1][1000/14659]	lr: 1.000e-04, eta: 1 day, 4:57:28, time: 0.606, data_time: 0.065, memory: 3523, loss_rpn_cls: 0.2609, loss_rpn_bbox: 0.1017, loss_cls: 0.3985, acc: 94.4727, loss_bbox: 0.1863, loss_mask: 0.7259, loss: 1.6733
+2023-02-10 15:37:18,900 - mmdet - INFO - Epoch [1][1050/14659]	lr: 1.000e-04, eta: 1 day, 4:59:43, time: 0.616, data_time: 0.079, memory: 3523, loss_rpn_cls: 0.2688, loss_rpn_bbox: 0.1139, loss_cls: 0.4189, acc: 94.1250, loss_bbox: 0.1967, loss_mask: 0.7216, loss: 1.7199
+2023-02-10 15:37:48,867 - mmdet - INFO - Epoch [1][1100/14659]	lr: 1.000e-04, eta: 1 day, 4:59:31, time: 0.599, data_time: 0.059, memory: 3523, loss_rpn_cls: 0.2633, loss_rpn_bbox: 0.1050, loss_cls: 0.4171, acc: 94.0308, loss_bbox: 0.2013, loss_mask: 0.7213, loss: 1.7079
+2023-02-10 15:38:18,958 - mmdet - INFO - Epoch [1][1150/14659]	lr: 1.000e-04, eta: 1 day, 4:59:36, time: 0.602, data_time: 0.061, memory: 3523, loss_rpn_cls: 0.2722, loss_rpn_bbox: 0.1013, loss_cls: 0.4008, acc: 94.5449, loss_bbox: 0.1797, loss_mask: 0.7183, loss: 1.6723
+2023-02-10 15:38:49,041 - mmdet - INFO - Epoch [1][1200/14659]	lr: 1.000e-04, eta: 1 day, 4:59:38, time: 0.602, data_time: 0.063, memory: 3523, loss_rpn_cls: 0.2598, loss_rpn_bbox: 0.1042, loss_cls: 0.4175, acc: 94.1465, loss_bbox: 0.1997, loss_mask: 0.7189, loss: 1.7000
+2023-02-10 15:39:19,543 - mmdet - INFO - Epoch [1][1250/14659]	lr: 1.000e-04, eta: 1 day, 5:00:37, time: 0.610, data_time: 0.062, memory: 3523, loss_rpn_cls: 0.2573, loss_rpn_bbox: 0.1054, loss_cls: 0.4185, acc: 94.2036, loss_bbox: 0.1947, loss_mask: 0.7173, loss: 1.6932
+2023-02-10 15:39:48,925 - mmdet - INFO - Epoch [1][1300/14659]	lr: 1.000e-04, eta: 1 day, 4:58:58, time: 0.588, data_time: 0.056, memory: 3523, loss_rpn_cls: 0.2442, loss_rpn_bbox: 0.0969, loss_cls: 0.3839, acc: 94.6167, loss_bbox: 0.1821, loss_mask: 0.7141, loss: 1.6213
+2023-02-10 15:40:19,180 - mmdet - INFO - Epoch [1][1350/14659]	lr: 1.000e-04, eta: 1 day, 4:59:15, time: 0.605, data_time: 0.063, memory: 3523, loss_rpn_cls: 0.2477, loss_rpn_bbox: 0.1078, loss_cls: 0.4125, acc: 94.0425, loss_bbox: 0.2017, loss_mask: 0.7113, loss: 1.6809
+2023-02-10 15:40:49,149 - mmdet - INFO - Epoch [1][1400/14659]	lr: 1.000e-04, eta: 1 day, 4:58:57, time: 0.600, data_time: 0.065, memory: 3523, loss_rpn_cls: 0.2629, loss_rpn_bbox: 0.1048, loss_cls: 0.4028, acc: 94.3022, loss_bbox: 0.1893, loss_mask: 0.7114, loss: 1.6710
+2023-02-10 15:41:19,155 - mmdet - INFO - Epoch [1][1450/14659]	lr: 1.000e-04, eta: 1 day, 4:58:40, time: 0.600, data_time: 0.059, memory: 3523, loss_rpn_cls: 0.2531, loss_rpn_bbox: 0.0996, loss_cls: 0.3911, acc: 94.5571, loss_bbox: 0.1811, loss_mask: 0.7126, loss: 1.6375
+2023-02-10 15:41:48,749 - mmdet - INFO - Epoch [1][1500/14659]	lr: 1.000e-04, eta: 1 day, 4:57:33, time: 0.592, data_time: 0.061, memory: 3523, loss_rpn_cls: 0.2433, loss_rpn_bbox: 0.1014, loss_cls: 0.3972, acc: 94.4629, loss_bbox: 0.1874, loss_mask: 0.7091, loss: 1.6384
+2023-02-10 15:42:19,055 - mmdet - INFO - Epoch [1][1550/14659]	lr: 1.000e-04, eta: 1 day, 4:57:50, time: 0.606, data_time: 0.069, memory: 3523, loss_rpn_cls: 0.2562, loss_rpn_bbox: 0.1034, loss_cls: 0.4178, acc: 94.1548, loss_bbox: 0.1956, loss_mask: 0.7079, loss: 1.6810
+2023-02-10 15:42:49,215 - mmdet - INFO - Epoch [1][1600/14659]	lr: 1.000e-04, eta: 1 day, 4:57:50, time: 0.603, data_time: 0.069, memory: 3523, loss_rpn_cls: 0.2720, loss_rpn_bbox: 0.1101, loss_cls: 0.4173, acc: 94.0464, loss_bbox: 0.1943, loss_mask: 0.7058, loss: 1.6995
+2023-02-10 15:43:19,322 - mmdet - INFO - Epoch [1][1650/14659]	lr: 1.000e-04, eta: 1 day, 4:57:39, time: 0.602, data_time: 0.073, memory: 3523, loss_rpn_cls: 0.2509, loss_rpn_bbox: 0.0988, loss_cls: 0.3819, acc: 94.5889, loss_bbox: 0.1784, loss_mask: 0.7030, loss: 1.6129
+2023-02-10 15:43:49,824 - mmdet - INFO - Epoch [1][1700/14659]	lr: 1.000e-04, eta: 1 day, 4:58:10, time: 0.610, data_time: 0.058, memory: 3523, loss_rpn_cls: 0.2543, loss_rpn_bbox: 0.1050, loss_cls: 0.4006, acc: 94.3950, loss_bbox: 0.1888, loss_mask: 0.7095, loss: 1.6583
+2023-02-10 15:44:19,954 - mmdet - INFO - Epoch [1][1750/14659]	lr: 1.000e-04, eta: 1 day, 4:58:00, time: 0.603, data_time: 0.057, memory: 3523, loss_rpn_cls: 0.2346, loss_rpn_bbox: 0.0963, loss_cls: 0.3971, acc: 94.3799, loss_bbox: 0.1900, loss_mask: 0.7022, loss: 1.6202
+2023-02-10 15:44:50,508 - mmdet - INFO - Epoch [1][1800/14659]	lr: 1.000e-04, eta: 1 day, 4:58:26, time: 0.610, data_time: 0.062, memory: 3523, loss_rpn_cls: 0.2412, loss_rpn_bbox: 0.0990, loss_cls: 0.4043, acc: 94.1787, loss_bbox: 0.1964, loss_mask: 0.7010, loss: 1.6419
+2023-02-10 15:45:20,814 - mmdet - INFO - Epoch [1][1850/14659]	lr: 1.000e-04, eta: 1 day, 4:58:31, time: 0.607, data_time: 0.062, memory: 3523, loss_rpn_cls: 0.2545, loss_rpn_bbox: 0.1049, loss_cls: 0.4105, acc: 94.0933, loss_bbox: 0.1979, loss_mask: 0.7005, loss: 1.6682
+2023-02-10 15:45:50,909 - mmdet - INFO - Epoch [1][1900/14659]	lr: 1.000e-04, eta: 1 day, 4:58:14, time: 0.602, data_time: 0.064, memory: 3523, loss_rpn_cls: 0.2448, loss_rpn_bbox: 0.0974, loss_cls: 0.3895, acc: 94.5659, loss_bbox: 0.1835, loss_mask: 0.7025, loss: 1.6177
+2023-02-10 15:46:20,747 - mmdet - INFO - Epoch [1][1950/14659]	lr: 1.000e-04, eta: 1 day, 4:57:33, time: 0.597, data_time: 0.059, memory: 3523, loss_rpn_cls: 0.2409, loss_rpn_bbox: 0.0957, loss_cls: 0.4185, acc: 94.1006, loss_bbox: 0.1997, loss_mask: 0.6996, loss: 1.6545
+2023-02-10 15:46:50,701 - mmdet - INFO - Exp name: mask_rcnn_r50_fpn_1x_coco.py
+2023-02-10 15:46:50,701 - mmdet - INFO - Epoch [1][2000/14659]	lr: 1.000e-04, eta: 1 day, 4:57:02, time: 0.599, data_time: 0.051, memory: 3523, loss_rpn_cls: 0.2254, loss_rpn_bbox: 0.0889, loss_cls: 0.3829, acc: 94.6030, loss_bbox: 0.1858, loss_mask: 0.7006, loss: 1.5836
+2023-02-10 15:47:20,929 - mmdet - INFO - Epoch [1][2050/14659]	lr: 1.000e-04, eta: 1 day, 4:56:54, time: 0.605, data_time: 0.060, memory: 3523, loss_rpn_cls: 0.2409, loss_rpn_bbox: 0.0974, loss_cls: 0.3860, acc: 94.5220, loss_bbox: 0.1826, loss_mask: 0.7024, loss: 1.6093
+2023-02-10 15:47:51,089 - mmdet - INFO - Epoch [1][2100/14659]	lr: 1.000e-04, eta: 1 day, 4:56:40, time: 0.603, data_time: 0.061, memory: 3523, loss_rpn_cls: 0.2318, loss_rpn_bbox: 0.0913, loss_cls: 0.3922, acc: 94.4238, loss_bbox: 0.1911, loss_mask: 0.7009, loss: 1.6073
+2023-02-10 15:48:20,893 - mmdet - INFO - Epoch [1][2150/14659]	lr: 1.000e-04, eta: 1 day, 4:55:56, time: 0.596, data_time: 0.059, memory: 3523, loss_rpn_cls: 0.2407, loss_rpn_bbox: 0.0945, loss_cls: 0.4167, acc: 94.0366, loss_bbox: 0.2050, loss_mask: 0.6989, loss: 1.6557
+2023-02-10 15:48:50,802 - mmdet - INFO - Epoch [1][2200/14659]	lr: 1.000e-04, eta: 1 day, 4:55:21, time: 0.598, data_time: 0.058, memory: 3523, loss_rpn_cls: 0.2337, loss_rpn_bbox: 0.0963, loss_cls: 0.4035, acc: 94.3228, loss_bbox: 0.1941, loss_mask: 0.6985, loss: 1.6261
+2023-02-10 15:49:21,904 - mmdet - INFO - Epoch [1][2250/14659]	lr: 1.000e-04, eta: 1 day, 4:56:18, time: 0.622, data_time: 0.065, memory: 3523, loss_rpn_cls: 0.2494, loss_rpn_bbox: 0.1051, loss_cls: 0.4028, acc: 94.2500, loss_bbox: 0.1925, loss_mask: 0.6968, loss: 1.6465
+2023-02-10 15:49:52,362 - mmdet - INFO - Epoch [1][2300/14659]	lr: 1.000e-04, eta: 1 day, 4:56:23, time: 0.609, data_time: 0.061, memory: 3523, loss_rpn_cls: 0.2429, loss_rpn_bbox: 0.1037, loss_cls: 0.3915, acc: 94.5020, loss_bbox: 0.1849, loss_mask: 0.6949, loss: 1.6179
+2023-02-10 15:50:22,711 - mmdet - INFO - Epoch [1][2350/14659]	lr: 1.000e-04, eta: 1 day, 4:56:18, time: 0.607, data_time: 0.057, memory: 3523, loss_rpn_cls: 0.2502, loss_rpn_bbox: 0.1054, loss_cls: 0.4033, acc: 94.2437, loss_bbox: 0.1938, loss_mask: 0.6969, loss: 1.6495
+2023-02-10 15:50:53,193 - mmdet - INFO - Epoch [1][2400/14659]	lr: 1.000e-04, eta: 1 day, 4:56:21, time: 0.609, data_time: 0.062, memory: 3523, loss_rpn_cls: 0.2391, loss_rpn_bbox: 0.0928, loss_cls: 0.4057, acc: 94.1089, loss_bbox: 0.1994, loss_mask: 0.6925, loss: 1.6295
+2023-02-10 15:51:23,652 - mmdet - INFO - Epoch [1][2450/14659]	lr: 1.000e-04, eta: 1 day, 4:56:24, time: 0.610, data_time: 0.065, memory: 3523, loss_rpn_cls: 0.2241, loss_rpn_bbox: 0.0911, loss_cls: 0.4119, acc: 94.2573, loss_bbox: 0.1987, loss_mask: 0.6958, loss: 1.6216
+2023-02-10 15:51:53,858 - mmdet - INFO - Epoch [1][2500/14659]	lr: 1.000e-04, eta: 1 day, 4:56:04, time: 0.604, data_time: 0.065, memory: 3523, loss_rpn_cls: 0.2375, loss_rpn_bbox: 0.0937, loss_cls: 0.3906, acc: 94.4907, loss_bbox: 0.1858, loss_mask: 0.6955, loss: 1.6031
+2023-02-10 15:52:23,835 - mmdet - INFO - Epoch [1][2550/14659]	lr: 1.000e-04, eta: 1 day, 4:55:31, time: 0.600, data_time: 0.064, memory: 3523, loss_rpn_cls: 0.2414, loss_rpn_bbox: 0.0973, loss_cls: 0.3958, acc: 94.3276, loss_bbox: 0.1923, loss_mask: 0.6902, loss: 1.6170
+2023-02-10 15:52:54,291 - mmdet - INFO - Epoch [1][2600/14659]	lr: 1.000e-04, eta: 1 day, 4:55:28, time: 0.609, data_time: 0.064, memory: 3523, loss_rpn_cls: 0.2491, loss_rpn_bbox: 0.0918, loss_cls: 0.3866, acc: 94.3931, loss_bbox: 0.1882, loss_mask: 0.6877, loss: 1.6033
+2023-02-10 15:53:25,513 - mmdet - INFO - Epoch [1][2650/14659]	lr: 1.000e-04, eta: 1 day, 4:56:15, time: 0.624, data_time: 0.069, memory: 3523, loss_rpn_cls: 0.2608, loss_rpn_bbox: 0.1090, loss_cls: 0.3874, acc: 94.3540, loss_bbox: 0.1888, loss_mask: 0.6899, loss: 1.6359
+2023-02-10 15:53:55,248 - mmdet - INFO - Epoch [1][2700/14659]	lr: 1.000e-04, eta: 1 day, 4:55:25, time: 0.595, data_time: 0.063, memory: 3523, loss_rpn_cls: 0.2495, loss_rpn_bbox: 0.0968, loss_cls: 0.3804, acc: 94.4868, loss_bbox: 0.1828, loss_mask: 0.6884, loss: 1.5978
+2023-02-10 15:54:25,607 - mmdet - INFO - Epoch [1][2750/14659]	lr: 1.000e-04, eta: 1 day, 4:55:13, time: 0.607, data_time: 0.061, memory: 3523, loss_rpn_cls: 0.2487, loss_rpn_bbox: 0.1010, loss_cls: 0.4236, acc: 93.8247, loss_bbox: 0.2072, loss_mask: 0.6910, loss: 1.6715
+2023-02-10 15:54:55,887 - mmdet - INFO - Epoch [1][2800/14659]	lr: 1.000e-04, eta: 1 day, 4:54:56, time: 0.605, data_time: 0.065, memory: 3523, loss_rpn_cls: 0.2453, loss_rpn_bbox: 0.0948, loss_cls: 0.3848, acc: 94.4800, loss_bbox: 0.1840, loss_mask: 0.6883, loss: 1.5972
+2023-02-10 15:55:25,866 - mmdet - INFO - Epoch [1][2850/14659]	lr: 1.000e-04, eta: 1 day, 4:54:23, time: 0.600, data_time: 0.060, memory: 3523, loss_rpn_cls: 0.2269, loss_rpn_bbox: 0.0883, loss_cls: 0.3999, acc: 94.2197, loss_bbox: 0.1995, loss_mask: 0.6897, loss: 1.6043
+2023-02-10 15:55:55,904 - mmdet - INFO - Epoch [1][2900/14659]	lr: 1.000e-04, eta: 1 day, 4:53:50, time: 0.601, data_time: 0.068, memory: 3523, loss_rpn_cls: 0.2396, loss_rpn_bbox: 0.0960, loss_cls: 0.3836, acc: 94.4805, loss_bbox: 0.1835, loss_mask: 0.6841, loss: 1.5867
+2023-02-10 15:56:26,821 - mmdet - INFO - Epoch [1][2950/14659]	lr: 1.000e-04, eta: 1 day, 4:54:08, time: 0.618, data_time: 0.064, memory: 3523, loss_rpn_cls: 0.2506, loss_rpn_bbox: 0.1009, loss_cls: 0.3993, acc: 94.2129, loss_bbox: 0.1917, loss_mask: 0.6889, loss: 1.6313
+2023-02-10 15:56:57,587 - mmdet - INFO - Exp name: mask_rcnn_r50_fpn_1x_coco.py
+2023-02-10 15:56:57,587 - mmdet - INFO - Epoch [1][3000/14659]	lr: 1.000e-04, eta: 1 day, 4:54:19, time: 0.616, data_time: 0.063, memory: 3523, loss_rpn_cls: 0.2413, loss_rpn_bbox: 0.1012, loss_cls: 0.4168, acc: 93.9556, loss_bbox: 0.2047, loss_mask: 0.6888, loss: 1.6528
+2023-02-10 15:57:27,797 - mmdet - INFO - Epoch [1][3050/14659]	lr: 1.000e-04, eta: 1 day, 4:53:55, time: 0.604, data_time: 0.063, memory: 3523, loss_rpn_cls: 0.2304, loss_rpn_bbox: 0.0905, loss_cls: 0.3889, acc: 94.3618, loss_bbox: 0.1933, loss_mask: 0.6883, loss: 1.5914
+2023-02-10 15:57:58,213 - mmdet - INFO - Epoch [1][3100/14659]	lr: 1.000e-04, eta: 1 day, 4:53:43, time: 0.608, data_time: 0.068, memory: 3523, loss_rpn_cls: 0.2487, loss_rpn_bbox: 0.1041, loss_cls: 0.4108, acc: 94.0063, loss_bbox: 0.2024, loss_mask: 0.6880, loss: 1.6540
+2023-02-10 15:58:28,825 - mmdet - INFO - Epoch [1][3150/14659]	lr: 1.000e-04, eta: 1 day, 4:53:42, time: 0.613, data_time: 0.065, memory: 3523, loss_rpn_cls: 0.2488, loss_rpn_bbox: 0.1095, loss_cls: 0.4116, acc: 93.9946, loss_bbox: 0.2037, loss_mask: 0.6877, loss: 1.6613
+2023-02-10 15:58:58,847 - mmdet - INFO - Epoch [1][3200/14659]	lr: 1.000e-04, eta: 1 day, 4:53:07, time: 0.600, data_time: 0.064, memory: 3523, loss_rpn_cls: 0.2345, loss_rpn_bbox: 0.0916, loss_cls: 0.3935, acc: 94.3535, loss_bbox: 0.1911, loss_mask: 0.6880, loss: 1.5987
+2023-02-10 15:59:30,976 - mmdet - INFO - Epoch [1][3250/14659]	lr: 1.000e-04, eta: 1 day, 4:54:23, time: 0.642, data_time: 0.074, memory: 3523, loss_rpn_cls: 0.2391, loss_rpn_bbox: 0.0973, loss_cls: 0.4160, acc: 93.8965, loss_bbox: 0.2095, loss_mask: 0.6841, loss: 1.6460
+2023-02-10 16:00:01,892 - mmdet - INFO - Epoch [1][3300/14659]	lr: 1.000e-04, eta: 1 day, 4:54:35, time: 0.619, data_time: 0.058, memory: 3523, loss_rpn_cls: 0.2367, loss_rpn_bbox: 0.0953, loss_cls: 0.3979, acc: 94.2305, loss_bbox: 0.1961, loss_mask: 0.6855, loss: 1.6114
+2023-02-10 16:00:32,983 - mmdet - INFO - Epoch [1][3350/14659]	lr: 1.000e-04, eta: 1 day, 4:54:52, time: 0.621, data_time: 0.060, memory: 3523, loss_rpn_cls: 0.2423, loss_rpn_bbox: 0.0987, loss_cls: 0.4041, acc: 94.0732, loss_bbox: 0.2008, loss_mask: 0.6843, loss: 1.6302
+2023-02-10 16:01:03,554 - mmdet - INFO - Epoch [1][3400/14659]	lr: 1.000e-04, eta: 1 day, 4:54:44, time: 0.612, data_time: 0.059, memory: 3523, loss_rpn_cls: 0.2372, loss_rpn_bbox: 0.0974, loss_cls: 0.4050, acc: 94.1338, loss_bbox: 0.1993, loss_mask: 0.6860, loss: 1.6250
+2023-02-10 16:01:34,675 - mmdet - INFO - Epoch [1][3450/14659]	lr: 1.000e-04, eta: 1 day, 4:55:01, time: 0.622, data_time: 0.062, memory: 3523, loss_rpn_cls: 0.2218, loss_rpn_bbox: 0.0887, loss_cls: 0.3914, acc: 94.3799, loss_bbox: 0.1936, loss_mask: 0.6865, loss: 1.5820

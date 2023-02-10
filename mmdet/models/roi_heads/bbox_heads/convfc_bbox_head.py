@@ -1,4 +1,4 @@
-# Copyright (c) OpenMMLab. All rights reserved.ConvFCBBoxHead
+# Copyright (c) OpenMMLab. All rights reserved.
 import torch.nn as nn
 from mmcv.cnn import ConvModule
 
@@ -31,7 +31,6 @@ class ConvFCBBoxHead(BBoxHead):
                  conv_cfg=None,
                  norm_cfg=None,
                  init_cfg=None,
-                 ensemble=True,
                  *args,
                  **kwargs):
         super(ConvFCBBoxHead, self).__init__(
@@ -60,13 +59,6 @@ class ConvFCBBoxHead(BBoxHead):
             self._add_conv_fc_branch(
                 self.num_shared_convs, self.num_shared_fcs, self.in_channels,
                 True)
-            
-        if ensemble:
-            self.shared_convs_for_image, self.shared_fcs_for_image, last_layer_dim_for_image = \
-                self._add_conv_fc_branch(
-                    self.num_shared_convs, self.num_shared_fcs, self.in_channels,
-                    True)
-                
         self.shared_out_channels = last_layer_dim
 
         # add cls specific branch
@@ -176,21 +168,6 @@ class ConvFCBBoxHead(BBoxHead):
             x = x.flatten(1)
 
             for fc in self.shared_fcs:
-                x = self.relu(fc(x))
-        return x
-
-    def forward_embedding_for_image(self,x):
-        if self.num_shared_convs > 0:
-            for conv in self.shared_convs_for_image:
-                x = conv(x)
-
-        if self.num_shared_fcs > 0:
-            if self.with_avg_pool:
-                x = self.avg_pool(x)
-
-            x = x.flatten(1)
-
-            for fc in self.shared_fcs_for_image:
                 x = self.relu(fc(x))
         return x
 
