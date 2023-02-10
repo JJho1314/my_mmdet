@@ -148,6 +148,11 @@ class TwoStageDetector(BaseDetector):
                                                  gt_bboxes, gt_labels,
                                                  gt_bboxes_ignore, gt_masks,
                                                  **kwargs)
+        
+        for name, p in self.roi_head.named_parameters():         
+            if p.requires_grad and p.grad is None:
+                print(name)
+        
         losses.update(roi_losses)
 
         return losses
