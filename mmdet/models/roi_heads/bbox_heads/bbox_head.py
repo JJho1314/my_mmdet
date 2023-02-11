@@ -273,6 +273,8 @@ class BBoxHead(BaseModule):
                     label_weights,
                     avg_factor=avg_factor,
                     reduction_override=reduction_override)
+                # print(cls_score.shape)
+                # print(cls_score)
                 if isinstance(loss_cls_, dict):
                     losses.update(loss_cls_)
                 else:

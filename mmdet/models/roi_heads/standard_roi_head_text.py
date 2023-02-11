@@ -8,7 +8,7 @@ from torch import distributed as dist
 from .visualize import visualize_oam_boxes
 from mmdet.core import (bbox2roi, bbox2result, build_assigner, merge_aug_bboxes,
                         build_sampler, multiclass_nms)
-
+import ipdb
 from .class_name import *
 from tqdm import tqdm
 import os.path as osp
@@ -52,24 +52,25 @@ class StandardRoIHeadTEXT(StandardRoIHead):
             dataset = 'lvis'
         self.num_classes = len(self.CLASSES)
         print('num_classes:',self.num_classes)
+        
         if self.num_classes == 1203:
             self.base_label_ids = lvis_base_label_ids
             self.novel_label_ids = torch.tensor(lvis_novel_label_ids, device=device)
-            self.novel_index = F.pad(torch.bincount(self.novel_label_ids),(0,self.num_classes-self.novel_label_ids.max())).bool()
+            # self.novel_index = F.pad(torch.bincount(self.novel_label_ids),(0,self.num_classes-self.novel_label_ids.max())).bool()
         elif self.num_classes == 20:
             self.novel_label_ids = torch.tensor(voc_novel_label_ids, device=device)
-            self.novel_index = F.pad(torch.bincount(self.novel_label_ids),(0,self.num_classes-self.novel_label_ids.max())).bool()
+            # self.novel_index = F.pad(torch.bincount(self.novel_label_ids),(0,self.num_classes-self.novel_label_ids.max())).bool()
         elif self.num_classes == 80:
             self.base_label_ids = coco_base_label_ids
             self.novel_label_ids = torch.tensor(coco_novel_label_ids, device=device)
-            self.novel_index = F.pad(torch.bincount(self.novel_label_ids),(0,self.num_classes-self.novel_label_ids.max())).bool()
+            # self.novel_index = F.pad(torch.bincount(self.novel_label_ids),(0,self.num_classes-self.novel_label_ids.max())).bool()
         self.clip_model, self.preprocess = clip.load('ViT-B/32', device)
         self.clip_model.eval()
         # self.reporter = MemReporter(self.clip_model)
-        for child in self.clip_model.children():
-            for param in child.parameters():
-                param.requires_grad = False
-        self.rank = dist.get_rank()
+        for param in self.clip_model.parameters():
+            param.requires_grad = False
+
+        # ipdb.set_trace()
         self.text_features_for_classes = []
         self.iters = 0
         self.ensemble = False
@@ -86,9 +87,11 @@ class StandardRoIHeadTEXT(StandardRoIHead):
         else:
             self.clip_model, self.preprocess = clip.load('ViT-B/32', device)
             self.clip_model.eval()
-            for child in self.clip_model.children():
-                for param in child.parameters():
-                    param.requires_grad = False
+            # for child in self.clip_model.children():
+            #     for param in child.parameters():
+            #         param.requires_grad = False
+            for param in self.clip_model.parameters():
+                param.requires_grad = False
             for template in tqdm(template_list):
                 text_features_for_classes = torch.cat([self.clip_model.encode_text(clip.tokenize(template.format(c)).to(device)).detach() for c in self.CLASSES])
                 self.text_features_for_classes.append(F.normalize(text_features_for_classes,dim=-1))
@@ -221,19 +224,19 @@ class StandardRoIHeadTEXT(StandardRoIHead):
         region_embeddings = self.projection(region_embeddings)
         region_embeddings = torch.nn.functional.normalize(region_embeddings, p=2, dim=1)
         text_features = torch.cat([self.text_features_for_classes, bg_class_embedding], dim=0)
-        cls_score_text = region_embeddings @ text_features.T
-     
+        cls_score_text = (region_embeddings @ text_features.T)
+             
         cls_score_text[:,self.novel_label_ids] = -1e11
+        # ipdb.set_trace()
+        # print(cls_score_text)
+        # text_cls_loss = F.cross_entropy(cls_score_text / self.temperature, labels, reduction='mean')
 
-        text_cls_loss = F.cross_entropy(cls_score_text / self.temperature, labels, reduction='mean')
-
-        loss_bbox = self.bbox_head.loss(None,
+        loss_bbox = self.bbox_head.loss(cls_score_text,
             bbox_results['bbox_pred'], rois,
             *bbox_targets)
-        loss_bbox.update(text_cls_loss=text_cls_loss)
+        # loss_bbox.update(text_cls_loss=text_cls_loss)
         bbox_results.update(loss_bbox=loss_bbox)
         return bbox_results
-
 
 
     def _mask_forward_train(self, x, sampling_results, bbox_feats, gt_masks,
