@@ -9,7 +9,7 @@ from mmdet.core import build_bbox_coder, multi_apply, multiclass_nms
 from mmdet.models.builder import HEADS, build_loss
 from mmdet.models.losses import accuracy
 from mmdet.models.utils import build_linear_layer
-
+import ipdb
 
 @HEADS.register_module()
 class BBoxHead(BaseModule):
@@ -273,8 +273,7 @@ class BBoxHead(BaseModule):
                     label_weights,
                     avg_factor=avg_factor,
                     reduction_override=reduction_override)
-                # print(cls_score.shape)
-                # print(cls_score)
+                # ipdb.set_trace()
                 if isinstance(loss_cls_, dict):
                     losses.update(loss_cls_)
                 else:

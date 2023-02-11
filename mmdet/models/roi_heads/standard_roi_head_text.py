@@ -57,6 +57,7 @@ class StandardRoIHeadTEXT(StandardRoIHead):
             self.base_label_ids = lvis_base_label_ids
             self.novel_label_ids = torch.tensor(lvis_novel_label_ids, device=device)
             # self.novel_index = F.pad(torch.bincount(self.novel_label_ids),(0,self.num_classes-self.novel_label_ids.max())).bool()
+            # 没用到
         elif self.num_classes == 20:
             self.novel_label_ids = torch.tensor(voc_novel_label_ids, device=device)
             # self.novel_index = F.pad(torch.bincount(self.novel_label_ids),(0,self.num_classes-self.novel_label_ids.max())).bool()
@@ -226,7 +227,7 @@ class StandardRoIHeadTEXT(StandardRoIHead):
         text_features = torch.cat([self.text_features_for_classes, bg_class_embedding], dim=0)
         cls_score_text = (region_embeddings @ text_features.T)
              
-        cls_score_text[:,self.novel_label_ids] = -1e11
+        # cls_score_text[:,self.novel_label_ids] = -1e11  # 貌似不需要用,用了损失函数非常大,因为把一些值变0了,也可以该labels上的
         # ipdb.set_trace()
         # print(cls_score_text)
         # text_cls_loss = F.cross_entropy(cls_score_text / self.temperature, labels, reduction='mean')
