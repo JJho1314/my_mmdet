@@ -227,7 +227,7 @@ class StandardRoIHeadTEXT(StandardRoIHead):
         text_features = torch.cat([self.text_features_for_classes, bg_class_embedding], dim=0)
         cls_score_text = (region_embeddings @ text_features.T)
              
-        # cls_score_text[:,self.novel_label_ids] = -1e11  # 貌似不需要用,用了损失函数非常大,因为把一些值变0了,也可以该labels上的
+        # cls_score_text[:,self.novel_label_ids] = -1e11  # 貌似不需要用,用了损失函数非常大,因为把一些值变0了,也可以该labels上
         # ipdb.set_trace()
         # print(cls_score_text)
         # text_cls_loss = F.cross_entropy(cls_score_text / self.temperature, labels, reduction='mean')
