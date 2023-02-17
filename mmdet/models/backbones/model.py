@@ -8,57 +8,8 @@ import torch.nn.functional as F
 from torch import nn
 from ..builder import BACKBONES
 
-import os
-import warnings
-from tqdm import tqdm
-import urllib
+import ipdb
 
-_MODELS = {
-    "RN50": "https://openaipublic.azureedge.net/clip/models/afeb0e10f9e5a86da6080e35cf09123aca3b358a0c3e3b6c78a7b63bc04b6762/RN50.pt",
-    "RN101": "https://openaipublic.azureedge.net/clip/models/8fa8567bab74a42d41c5915025a8e4538c3bdbe8804a470a72f30b0d94fab599/RN101.pt",
-    "RN50x4": "https://openaipublic.azureedge.net/clip/models/7e526bd135e493cef0776de27d5f42653e6b4c8bf9e0f653bb11773263205fdd/RN50x4.pt",
-    "RN50x16": "https://openaipublic.azureedge.net/clip/models/52378b407f34354e150460fe41077663dd5b39c54cd0bfd2b27167a4a06ec9aa/RN50x16.pt",
-    "RN50x64": "https://openaipublic.azureedge.net/clip/models/be1cfb55d75a9666199fb2206c106743da0f6468c9d327f3e0d0a543a9919d9c/RN50x64.pt",
-    "ViT-B/32": "https://openaipublic.azureedge.net/clip/models/40d365715913c9da98579312b702a82c18be219cc2a73407c4526f58eba950af/ViT-B-32.pt",
-    "ViT-B/16": "https://openaipublic.azureedge.net/clip/models/5806e77cd80f8b59890b7e101eabd078d9fb84e6937f9e85e4ecb61988df416f/ViT-B-16.pt",
-    "ViT-L/14": "https://openaipublic.azureedge.net/clip/models/b8cca3fd41ae0c99ba7e8951adf17d267cdb84cd88be6f7c2e0eca1737a03836/ViT-L-14.pt",
-    "ViT-L/14@336px": "https://openaipublic.azureedge.net/clip/models/3035c92b350959924f9f00213499208652fc7ea050643e8b385c2dac08641f02/ViT-L-14-336px.pt",
-}
-
-def available_models() -> List[str]:
-    """Returns the names of available CLIP models"""
-    return list(_MODELS.keys())
-
-def _download(url: str, root: str):
-    os.makedirs(root, exist_ok=True)
-    filename = os.path.basename(url)
-
-    expected_sha256 = url.split("/")[-2]
-    download_target = os.path.join(root, filename)
-
-    if os.path.exists(download_target) and not os.path.isfile(download_target):
-        raise RuntimeError(f"{download_target} exists and is not a regular file")
-
-    if os.path.isfile(download_target):
-        if hashlib.sha256(open(download_target, "rb").read()).hexdigest() == expected_sha256:
-            return download_target
-        else:
-            warnings.warn(f"{download_target} exists, but the SHA256 checksum does not match; re-downloading the file")
-
-    with urllib.request.urlopen(url) as source, open(download_target, "wb") as output:
-        with tqdm(total=int(source.info().get("Content-Length")), ncols=80, unit='iB', unit_scale=True, unit_divisor=1024) as loop:
-            while True:
-                buffer = source.read(8192)
-                if not buffer:
-                    break
-
-                output.write(buffer)
-                loop.update(len(buffer))
-
-    if hashlib.sha256(open(download_target, "rb").read()).hexdigest() != expected_sha256:
-        raise RuntimeError("Model has been downloaded but the SHA256 checksum does not not match")
-
-    return download_target
 
 class Bottleneck(nn.Module):
     expansion = 4
@@ -175,8 +126,8 @@ class ModifiedResNet(nn.Module):
         self.layer3 = self._make_layer(width * 4, layers[2], stride=2)
         self.layer4 = self._make_layer(width * 8, layers[3], stride=2)
 
-        # embed_dim = width * 32  # the ResNet feature dimension
-        # self.attnpool = AttentionPool2d(input_resolution // 32, embed_dim, heads, output_dim)
+        embed_dim = width * 32  # the ResNet feature dimension
+        self.attnpool = AttentionPool2d(input_resolution // 32, embed_dim, heads, output_dim)
 
     def _make_layer(self, planes, blocks, stride=1):
         layers = [Bottleneck(self._inplanes, planes, stride)]
@@ -187,27 +138,27 @@ class ModifiedResNet(nn.Module):
 
         return nn.Sequential(*layers)
     
-    def feature_extract(self, x):
+    def Top_level_feature_extract(self, x):
         def stem(x):
             x = self.relu1(self.bn1(self.conv1(x)))
             x = self.relu2(self.bn2(self.conv2(x)))
             x = self.relu3(self.bn3(self.conv3(x)))
             x = self.avgpool(x)
             return x
-        outs = []
-        with torch.no_grad():
-            x = x.type(self.conv1.weight.dtype)
-            x = stem(x)
-            x = self.layer1(x)
-            outs.append(x)
-            x = self.layer2(x)
-            outs.append(x)
-            x = self.layer3(x)
-            outs.append(x)
-            x = self.layer4(x)
-            outs.append(x)
+
+        x = x.type(self.conv1.weight.dtype)
+        x = stem(x)
+        x = self.layer1(x)
+        x = self.layer2(x)
+        x = self.layer3(x)
+        x = self.layer4(x)
             
-        return tuple(outs)
+        return x
+    
+    def VLM_pool_layer(self, x):
+        x = self.attnpool(x)
+        
+        return x
       
     def forward(self, x):
         def stem(x):
@@ -233,6 +184,7 @@ class ModifiedResNet(nn.Module):
         x4 = self.layer4(x3)
         # print(x4.shape)
         outs.append(x4)
+        # ipdb.set_trace()
         # x = self.attnpool(x)
 
         return tuple(outs)

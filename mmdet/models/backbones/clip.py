@@ -13,7 +13,7 @@ from tqdm import tqdm
 
 from .model import build_model, build_image_model
 from ..builder import BACKBONES
-
+import ipdb
 try:
     from torchvision.transforms import InterpolationMode
     BICUBIC = InterpolationMode.BICUBIC
@@ -192,17 +192,6 @@ def load(name: str, device: Union[str, torch.device] = "cuda" if torch.cuda.is_a
         model.float()
 
     return model, _transform(model.input_resolution.item())
-
-@BACKBONES.register_module()
-class clip_image(nn.Module):
-    def __init__(self):
-        super(clip_image, self).__init__()
-        
-        self._model, self._prepropess = load('RN50',device='cuda')
-        
-    def forward(self, x):
-        
-        return self._model.image_feature_extract(x)
 
 
 @BACKBONES.register_module()

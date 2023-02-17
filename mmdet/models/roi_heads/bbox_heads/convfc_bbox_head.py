@@ -5,6 +5,7 @@ from mmcv.cnn import ConvModule
 from mmdet.models.builder import HEADS
 from mmdet.models.utils import build_linear_layer
 from .bbox_head import BBoxHead
+import ipdb
 
 
 @HEADS.register_module()
@@ -165,7 +166,7 @@ class ConvFCBBoxHead(BBoxHead):
             if self.with_avg_pool:
                 x = self.avg_pool(x)
 
-            x = x.flatten(1)
+            x = x.flatten(1)  
 
             for fc in self.shared_fcs:
                 x = self.relu(fc(x))

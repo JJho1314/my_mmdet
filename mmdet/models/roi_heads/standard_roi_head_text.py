@@ -1,4 +1,4 @@
-from ..builder import HEADS
+from ..builder import HEADS, build_head, build_roi_extractor
 import torch
 import clip
 import torch.nn as nn
@@ -8,11 +8,13 @@ from torch import distributed as dist
 from .visualize import visualize_oam_boxes
 from mmdet.core import (bbox2roi, bbox2result, build_assigner, merge_aug_bboxes,
                         build_sampler, multiclass_nms)
+from mmcv.ops.roi_align import roi_align
 import ipdb
 from .class_name import *
 from tqdm import tqdm
 import os.path as osp
 import time
+from ..backbones.clip import Resnet50
 
 @HEADS.register_module()
 class StandardRoIHeadTEXT(StandardRoIHead):
@@ -65,12 +67,13 @@ class StandardRoIHeadTEXT(StandardRoIHead):
             self.base_label_ids = coco_base_label_ids
             self.novel_label_ids = torch.tensor(coco_novel_label_ids, device=device)
             # self.novel_index = F.pad(torch.bincount(self.novel_label_ids),(0,self.num_classes-self.novel_label_ids.max())).bool()
-        self.clip_model, self.preprocess = clip.load('ViT-B/32', device)
+        self.clip_model, self.preprocess = clip.load('RN50', device)
         self.clip_model.eval()
         # self.reporter = MemReporter(self.clip_model)
         for param in self.clip_model.parameters():
             param.requires_grad = False
-
+            
+        self.clip_image_encoder = Resnet50('RN50', device)
         # ipdb.set_trace()
         self.text_features_for_classes = []
         self.iters = 0
@@ -86,7 +89,7 @@ class StandardRoIHeadTEXT(StandardRoIHead):
         if osp.exists(save_path):
             self.text_features_for_classes = torch.load(save_path).to(device).squeeze()
         else:
-            self.clip_model, self.preprocess = clip.load('ViT-B/32', device)
+            self.clip_model, self.preprocess = clip.load('RN50', device)
             self.clip_model.eval()
             # for child in self.clip_model.children():
             #     for param in child.parameters():
@@ -101,21 +104,28 @@ class StandardRoIHeadTEXT(StandardRoIHead):
             torch.save(self.text_features_for_classes.detach().cpu(),save_path)
         self.text_features_for_classes = self.text_features_for_classes.float()
         self.text_features_for_classes = F.normalize(self.text_features_for_classes,dim=-1)
+        # ipdb.set_trace()
         # reporter.report()
         print('text embedding finished, {} passed'.format(time.time()-time_start))
-        self.bg_embedding = nn.Linear(1,512)
-        self.projection = nn.Linear(1024,512)
+        self.bg_embedding = nn.Linear(1,1024)
+        # self.projection = nn.Linear(1024,512)
+
         self.temperature = 0.01
-        if self.ensemble:
-            self.projection_for_image = nn.Linear(1024,512)
-            nn.init.xavier_uniform_(self.projection_for_image.weight)
-            nn.init.constant_(self.projection_for_image.bias, 0)
+        # if self.ensemble:
+        #     self.projection_for_image = nn.Linear(1024,512)
+        #     nn.init.xavier_uniform_(self.projection_for_image.weight)
+        #     nn.init.constant_(self.projection_for_image.bias, 0)
 
         nn.init.xavier_uniform_(self.bg_embedding.weight)
         nn.init.constant_(self.bg_embedding.bias, 0)
 
-        nn.init.xavier_uniform_(self.projection.weight)
-        nn.init.constant_(self.projection.bias, 0)
+        # nn.init.xavier_uniform_(self.projection.weight)
+        # nn.init.constant_(self.projection.bias, 0)
+    
+    def init_bbox_head(self, bbox_roi_extractor, bbox_head):
+        """Initialize ``bbox_head``"""
+        self.bbox_roi_extractor = build_roi_extractor(bbox_roi_extractor)
+        self.bbox_head = build_head(bbox_head)
 
     def forward_dummy(self, x, proposals):
         """Dummy forward function."""
@@ -195,6 +205,11 @@ class StandardRoIHeadTEXT(StandardRoIHead):
             losses.update(mask_results['loss_mask'])
 
         return losses
+    
+    def clip_image_forward_align(self, img, bboxes):
+        Top_level_feature = self.clip_image_encoder.Top_level_feature_extract(img)
+        cropped_embeddings = roi_align(Top_level_feature,bboxes,(7,7))
+        return cropped_embeddings
 
     def _bbox_forward(self, x, rois):
         """Box head forward function used in both training and testing."""
@@ -202,9 +217,11 @@ class StandardRoIHeadTEXT(StandardRoIHead):
         # rois = rois.float()
         bbox_feats = self.bbox_roi_extractor(
             x[:self.bbox_roi_extractor.num_inputs], rois)
+        # ipdb.set_trace()
         if self.with_shared_head:
             bbox_feats = self.shared_head(bbox_feats)
         region_embeddings = self.bbox_head.forward_embedding(bbox_feats)
+        # ipdb.set_trace()
         bbox_pred = self.bbox_head(region_embeddings)
         bbox_results = dict(
             bbox_pred=bbox_pred, bbox_feats=bbox_feats)
@@ -215,21 +232,24 @@ class StandardRoIHeadTEXT(StandardRoIHead):
         """Run forward function and calculate loss for box head in training."""
         rois = bbox2roi([res.bboxes for res in sampling_results])
         input_one = x[0].new_ones(1)
-        bg_class_embedding = self.bg_embedding(input_one).reshape(1, 512)
+        bg_class_embedding = self.bg_embedding(input_one).reshape(1, 1024)
         bg_class_embedding = torch.nn.functional.normalize(bg_class_embedding, p=2, dim=1)
         bbox_results, region_embeddings = self._bbox_forward(x, rois)
-      
+        # ipdb.set_trace()
         bbox_targets = self.bbox_head.get_targets(sampling_results, gt_bboxes,
                                                   gt_labels, self.train_cfg)
         labels, _, _, _ = bbox_targets
-        region_embeddings = self.projection(region_embeddings)
         region_embeddings = torch.nn.functional.normalize(region_embeddings, p=2, dim=1)
         text_features = torch.cat([self.text_features_for_classes, bg_class_embedding], dim=0)
-        cls_score_text = (region_embeddings @ text_features.T)
+        
+
+        cls_score_text = region_embeddings @ text_features.T
+        cls_score_text = cls_score_text / self.temperature
+        #0.009#0.008#0.007
+        cls_score_text = cls_score_text.softmax(dim=1)
              
         # cls_score_text[:,self.novel_label_ids] = -1e11  # 貌似不需要用,用了损失函数非常大,因为把一些值变0了,也可以该labels上
         # ipdb.set_trace()
-        # print(cls_score_text)
         # text_cls_loss = F.cross_entropy(cls_score_text / self.temperature, labels, reduction='mean')
 
         loss_bbox = self.bbox_head.loss(cls_score_text,
@@ -324,7 +344,7 @@ class StandardRoIHeadTEXT(StandardRoIHead):
         rois = bbox2roi(proposals)
 
         bbox_results,region_embeddings = self._bbox_forward(x,rois)
-        region_embeddings = self.projection(region_embeddings)
+
         region_embeddings = torch.nn.functional.normalize(region_embeddings,p=2,dim=1)
         input_one = x[0].new_ones(1)
         bg_class_embedding = self.bg_embedding(input_one).unsqueeze(0)
@@ -332,16 +352,32 @@ class StandardRoIHeadTEXT(StandardRoIHead):
         text_features = torch.cat([self.text_features_for_classes,bg_class_embedding],dim=0)
         #-----------------------------------------------------
         # """
-        cls_score_text = region_embeddings@text_features.T
-        cls_score_text = cls_score_text/0.007
+        cls_score_text = region_embeddings @ text_features.T
+        cls_score_text = cls_score_text / self.temperature
         #0.009#0.008#0.007
         cls_score_text = cls_score_text.softmax(dim=1)
         #--------------------------------------------
         # """
-        # """
-        # """
-        cls_score = cls_score_text
-        # """
+        cropped_embeddings = self.clip_image_forward_align(img, rois)
+        VLM_embedding = self.clip_image_encoder.attnpool(cropped_embeddings)
+        # VLM_embedding = self.projection(VLM_embedding)
+        
+        cls_score_VLM = VLM_embedding @ text_features.T
+        cls_score_VLM = cls_score_VLM / self.temperature
+        #0.009#0.008#0.007
+        cls_score_VLM = cls_score_VLM.softmax(dim=1)
+           
+        a = 1/3
+
+        # cls_score= torch.where(self.novel_index,cls_score_VLM**(1-a)*cls_score_text**a,
+        #                 cls_score_text**(1-a)*cls_score_VLM**a)
+
+        # cls_score_align= torch.where(self.novel_index,cls_score_clip_align**(1-a)*cls_score_text**a,
+                        #    cls_score_text**(1-a)*cls_score_clip_align**a)
+        cls_score = cls_score_text**(1-a)*cls_score_VLM**a
+        # cls_score = cls_score_image
+        # ipdb.set_trace()
+        
         bbox_pred = bbox_results['bbox_pred']
         num_proposals_per_img = tuple(len(p) for p in proposals)
         rois = rois.split(num_proposals_per_img, 0)
@@ -377,17 +413,15 @@ class StandardRoIHeadTEXT(StandardRoIHead):
     def simple_test(self,
                     x,
                     img,
-                    img_no_normalize,
                     proposal_list,
                     img_metas,
-                    precomputed_proposals,
-                    rescale=False,
-                    **kwargs):
+                    proposals=None,
+                    rescale=False):
         """Test without augmentation."""
         assert self.with_bbox, 'Bbox head must be implemented.'
 
         det_bboxes, det_labels = self.simple_test_bboxes(
-            x,img, img_metas, proposal_list,precomputed_proposals, self.test_cfg, rescale=rescale)
+            x, img, img_metas, proposal_list, self.test_cfg, rescale=rescale)
         if torch.onnx.is_in_onnx_export():
             if self.with_mask:
                 segm_results = self.simple_test_mask(
