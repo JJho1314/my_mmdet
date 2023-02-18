@@ -108,7 +108,7 @@ class StandardRoIHeadTEXT(StandardRoIHead):
         # reporter.report()
         print('text embedding finished, {} passed'.format(time.time()-time_start))
         self.bg_embedding = nn.Linear(1,1024)
-        # self.projection = nn.Linear(1024,512)
+        self.projection = nn.Linear(1024,1024)
 
         self.temperature = 0.01
         # if self.ensemble:
@@ -119,8 +119,8 @@ class StandardRoIHeadTEXT(StandardRoIHead):
         nn.init.xavier_uniform_(self.bg_embedding.weight)
         nn.init.constant_(self.bg_embedding.bias, 0)
 
-        # nn.init.xavier_uniform_(self.projection.weight)
-        # nn.init.constant_(self.projection.bias, 0)
+        nn.init.xavier_uniform_(self.projection.weight)
+        nn.init.constant_(self.projection.bias, 0)
     
     def init_bbox_head(self, bbox_roi_extractor, bbox_head):
         """Initialize ``bbox_head``"""
@@ -239,14 +239,15 @@ class StandardRoIHeadTEXT(StandardRoIHead):
         bbox_targets = self.bbox_head.get_targets(sampling_results, gt_bboxes,
                                                   gt_labels, self.train_cfg)
         labels, _, _, _ = bbox_targets
+        
+        region_embeddings = self.projection(region_embeddings)
         region_embeddings = torch.nn.functional.normalize(region_embeddings, p=2, dim=1)
         text_features = torch.cat([self.text_features_for_classes, bg_class_embedding], dim=0)
         
-
         cls_score_text = region_embeddings @ text_features.T
         cls_score_text = cls_score_text / self.temperature
         #0.009#0.008#0.007
-        cls_score_text = cls_score_text.softmax(dim=1)
+        # cls_score_text = cls_score_text.softmax(dim=1)
              
         # cls_score_text[:,self.novel_label_ids] = -1e11  # 貌似不需要用,用了损失函数非常大,因为把一些值变0了,也可以该labels上
         # ipdb.set_trace()
@@ -344,7 +345,7 @@ class StandardRoIHeadTEXT(StandardRoIHead):
         rois = bbox2roi(proposals)
 
         bbox_results,region_embeddings = self._bbox_forward(x,rois)
-
+        region_embeddings = self.projection(region_embeddings)
         region_embeddings = torch.nn.functional.normalize(region_embeddings,p=2,dim=1)
         input_one = x[0].new_ones(1)
         bg_class_embedding = self.bg_embedding(input_one).unsqueeze(0)

@@ -10,7 +10,7 @@ from mmdet.core import (bbox2roi, bbox_mapping, merge_aug_bboxes,
 
 if sys.version_info >= (3, 7):
     from mmdet.utils.contextmanagers import completed
-
+import ipdb
 
 class BBoxTestMixin:
 
@@ -89,7 +89,7 @@ class BBoxTestMixin:
         bbox_results = self._bbox_forward(x, rois)
         img_shapes = tuple(meta['img_shape'] for meta in img_metas)
         scale_factors = tuple(meta['scale_factor'] for meta in img_metas)
-
+        ipdb.set_trace()
         # split batch bbox prediction back to each image
         cls_score = bbox_results['cls_score']
         bbox_pred = bbox_results['bbox_pred']
