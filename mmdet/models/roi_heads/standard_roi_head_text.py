@@ -15,7 +15,10 @@ from tqdm import tqdm
 import os.path as osp
 import time
 from ..backbones.clip import Resnet50
+from ..backbones.model import AttentionPool2d
+from .roi_extractors.single_level_roi_extractor import SingleRoIExtractor
 
+    
 @HEADS.register_module()
 class StandardRoIHeadTEXT(StandardRoIHead):
     """RoI head for Double Head RCNN
@@ -108,7 +111,10 @@ class StandardRoIHeadTEXT(StandardRoIHead):
         # reporter.report()
         print('text embedding finished, {} passed'.format(time.time()-time_start))
         self.bg_embedding = nn.Linear(1,1024)
-        self.projection = nn.Linear(1024,1024)
+        # self.projection = nn.Linear(1024,1024)
+        
+        self.attnpool = AttentionPool2d(7, 256, 32, 1024)
+        self.roialign = SingleRoIExtractor(roi_layer=dict(type='RoIAlign', output_size=7, sampling_ratio=0), out_channels=2048, featmap_strides=[32])
 
         self.temperature = 0.01
         # if self.ensemble:
@@ -119,8 +125,8 @@ class StandardRoIHeadTEXT(StandardRoIHead):
         nn.init.xavier_uniform_(self.bg_embedding.weight)
         nn.init.constant_(self.bg_embedding.bias, 0)
 
-        nn.init.xavier_uniform_(self.projection.weight)
-        nn.init.constant_(self.projection.bias, 0)
+        # nn.init.xavier_uniform_(self.projection.weight)
+        # nn.init.constant_(self.projection.bias, 0)
     
     def init_bbox_head(self, bbox_roi_extractor, bbox_head):
         """Initialize ``bbox_head``"""
@@ -208,7 +214,10 @@ class StandardRoIHeadTEXT(StandardRoIHead):
     
     def clip_image_forward_align(self, img, bboxes):
         Top_level_feature = self.clip_image_encoder.Top_level_feature_extract(img)
-        cropped_embeddings = roi_align(Top_level_feature,bboxes,(7,7))
+        # ipdb.set_trace()
+        feature = []
+        feature.append(Top_level_feature)
+        cropped_embeddings = self.roialign(tuple(feature), bboxes)
         return cropped_embeddings
 
     def _bbox_forward(self, x, rois):
@@ -217,15 +226,17 @@ class StandardRoIHeadTEXT(StandardRoIHead):
         # rois = rois.float()
         bbox_feats = self.bbox_roi_extractor(
             x[:self.bbox_roi_extractor.num_inputs], rois)
-        # ipdb.set_trace()
+
         if self.with_shared_head:
             bbox_feats = self.shared_head(bbox_feats)
         region_embeddings = self.bbox_head.forward_embedding(bbox_feats)
         # ipdb.set_trace()
+        region_encoder = self.attnpool(bbox_feats)
+        
         bbox_pred = self.bbox_head(region_embeddings)
         bbox_results = dict(
             bbox_pred=bbox_pred, bbox_feats=bbox_feats)
-        return bbox_results, region_embeddings
+        return bbox_results, region_encoder
 
     def _bbox_forward_train(self, x, sampling_results, gt_bboxes, gt_labels,
                             img_metas):
@@ -240,7 +251,6 @@ class StandardRoIHeadTEXT(StandardRoIHead):
                                                   gt_labels, self.train_cfg)
         labels, _, _, _ = bbox_targets
         
-        region_embeddings = self.projection(region_embeddings)
         region_embeddings = torch.nn.functional.normalize(region_embeddings, p=2, dim=1)
         text_features = torch.cat([self.text_features_for_classes, bg_class_embedding], dim=0)
         
@@ -345,7 +355,7 @@ class StandardRoIHeadTEXT(StandardRoIHead):
         rois = bbox2roi(proposals)
 
         bbox_results,region_embeddings = self._bbox_forward(x,rois)
-        region_embeddings = self.projection(region_embeddings)
+  
         region_embeddings = torch.nn.functional.normalize(region_embeddings,p=2,dim=1)
         input_one = x[0].new_ones(1)
         bg_class_embedding = self.bg_embedding(input_one).unsqueeze(0)
@@ -353,6 +363,7 @@ class StandardRoIHeadTEXT(StandardRoIHead):
         text_features = torch.cat([self.text_features_for_classes,bg_class_embedding],dim=0)
         #-----------------------------------------------------
         # """
+        # ipdb.set_trace()
         cls_score_text = region_embeddings @ text_features.T
         cls_score_text = cls_score_text / self.temperature
         #0.009#0.008#0.007
