@@ -12,8 +12,7 @@ model = dict(
     #     style='pytorch',
     #     init_cfg=dict(type='Pretrained', checkpoint='torchvision://resnet50')),
     backbone=dict(
-        type = 'Resnet50',
-        name = "RN50"
+        type = 'clip_image'
     ),
     neck=dict(
         type='FPN',

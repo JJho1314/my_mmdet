@@ -14,8 +14,6 @@ from .class_name import *
 from tqdm import tqdm
 import os.path as osp
 import time
-from ..backbones.clip import Resnet50
-from ..backbones.model import AttentionPool2d
 from .roi_extractors.single_level_roi_extractor import SingleRoIExtractor
 
     
@@ -71,13 +69,11 @@ class StandardRoIHeadTEXT(StandardRoIHead):
             self.novel_label_ids = torch.tensor(coco_novel_label_ids, device=device)
             # self.novel_index = F.pad(torch.bincount(self.novel_label_ids),(0,self.num_classes-self.novel_label_ids.max())).bool()
         self.clip_model, self.preprocess = clip.load('RN50', device)
-        self.clip_model.eval()
+        self.clip_model.eval().float()
         # self.reporter = MemReporter(self.clip_model)
         for param in self.clip_model.parameters():
             param.requires_grad = False
-            
-        self.clip_image_encoder = Resnet50('RN50', device)
-        # ipdb.set_trace()
+   
         self.text_features_for_classes = []
         self.iters = 0
         self.ensemble = False
@@ -93,10 +89,8 @@ class StandardRoIHeadTEXT(StandardRoIHead):
             self.text_features_for_classes = torch.load(save_path).to(device).squeeze()
         else:
             self.clip_model, self.preprocess = clip.load('RN50', device)
-            self.clip_model.eval()
-            # for child in self.clip_model.children():
-            #     for param in child.parameters():
-            #         param.requires_grad = False
+            self.clip_model.eval().float()
+
             for param in self.clip_model.parameters():
                 param.requires_grad = False
             for template in tqdm(template_list):
@@ -113,7 +107,6 @@ class StandardRoIHeadTEXT(StandardRoIHead):
         self.bg_embedding = nn.Linear(1,1024)
         # self.projection = nn.Linear(1024,1024)
         
-        self.attnpool = AttentionPool2d(7, 256, 32, 1024)
         self.roialign = SingleRoIExtractor(roi_layer=dict(type='RoIAlign', output_size=7, sampling_ratio=0), out_channels=2048, featmap_strides=[32])
 
         self.temperature = 0.01
@@ -212,8 +205,22 @@ class StandardRoIHeadTEXT(StandardRoIHead):
 
         return losses
     
+    def Top_level_feature_extract(self, x):
+        
+        x = x.type(self.clip_model.visual.conv1.weight.dtype)
+        x = self.clip_model.visual.relu1(self.clip_model.visual.bn1(self.clip_model.visual.conv1(x)))
+        x = self.clip_model.visual.relu2(self.clip_model.visual.bn2(self.clip_model.visual.conv2(x)))
+        x = self.clip_model.visual.relu3(self.clip_model.visual.bn3(self.clip_model.visual.conv3(x)))
+        x = self.clip_model.visual.avgpool(x)
+        x = self.clip_model.visual.layer1(x)
+        x = self.clip_model.visual.layer2(x)
+        x = self.clip_model.visual.layer3(x)
+        x = self.clip_model.visual.layer4(x)
+        
+        return x.float()
+    
     def clip_image_forward_align(self, img, bboxes):
-        Top_level_feature = self.clip_image_encoder.Top_level_feature_extract(img)
+        Top_level_feature = self.Top_level_feature_extract(img)
         # ipdb.set_trace()
         feature = []
         feature.append(Top_level_feature)
@@ -231,12 +238,11 @@ class StandardRoIHeadTEXT(StandardRoIHead):
             bbox_feats = self.shared_head(bbox_feats)
         region_embeddings = self.bbox_head.forward_embedding(bbox_feats)
         # ipdb.set_trace()
-        region_encoder = self.attnpool(bbox_feats)
         
         bbox_pred = self.bbox_head(region_embeddings)
         bbox_results = dict(
             bbox_pred=bbox_pred, bbox_feats=bbox_feats)
-        return bbox_results, region_encoder
+        return bbox_results, region_embeddings
 
     def _bbox_forward_train(self, x, sampling_results, gt_bboxes, gt_labels,
                             img_metas):
@@ -367,17 +373,16 @@ class StandardRoIHeadTEXT(StandardRoIHead):
         cls_score_text = region_embeddings @ text_features.T
         cls_score_text = cls_score_text / self.temperature
         #0.009#0.008#0.007
-        cls_score_text = cls_score_text.softmax(dim=1)
+        # cls_score_text = cls_score_text.softmax(dim=1)
         #--------------------------------------------
         # """
         cropped_embeddings = self.clip_image_forward_align(img, rois)
-        VLM_embedding = self.clip_image_encoder.attnpool(cropped_embeddings)
-        # VLM_embedding = self.projection(VLM_embedding)
+        VLM_embedding = self.clip_model.visual.attnpool(cropped_embeddings)
         
         cls_score_VLM = VLM_embedding @ text_features.T
         cls_score_VLM = cls_score_VLM / self.temperature
         #0.009#0.008#0.007
-        cls_score_VLM = cls_score_VLM.softmax(dim=1)
+        # cls_score_VLM = cls_score_VLM.softmax(dim=1)
            
         a = 1/3
 
@@ -386,7 +391,7 @@ class StandardRoIHeadTEXT(StandardRoIHead):
 
         # cls_score_align= torch.where(self.novel_index,cls_score_clip_align**(1-a)*cls_score_text**a,
                         #    cls_score_text**(1-a)*cls_score_clip_align**a)
-        cls_score = cls_score_text**(1-a)*cls_score_VLM**a
+        cls_score = cls_score_text
         # cls_score = cls_score_image
         # ipdb.set_trace()
         

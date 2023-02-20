@@ -10,7 +10,6 @@ from torch.nn.modules.batchnorm import _BatchNorm
 from ..builder import BACKBONES
 from ..utils import ResLayer
 
-
 class BasicBlock(BaseModule):
     expansion = 1
 
@@ -671,3 +670,5 @@ class ResNetV1d(ResNet):
     def __init__(self, **kwargs):
         super(ResNetV1d, self).__init__(
             deep_stem=True, avg_down=True, **kwargs)
+        
+
