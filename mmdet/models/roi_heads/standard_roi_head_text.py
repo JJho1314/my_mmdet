@@ -97,6 +97,7 @@ class StandardRoIHeadTEXT(StandardRoIHead):
                 text_features_for_classes = torch.cat([self.clip_model.encode_text(clip.tokenize(template.format(c)).to(device)).detach() for c in self.CLASSES])
                 self.text_features_for_classes.append(F.normalize(text_features_for_classes,dim=-1))
 
+            # ipdb.set_trace()
             self.text_features_for_classes = torch.stack(self.text_features_for_classes).mean(dim=0)
             torch.save(self.text_features_for_classes.detach().cpu(),save_path)
         self.text_features_for_classes = self.text_features_for_classes.float()
@@ -109,7 +110,9 @@ class StandardRoIHeadTEXT(StandardRoIHead):
         
         self.roialign = SingleRoIExtractor(roi_layer=dict(type='RoIAlign', output_size=7, sampling_ratio=0), out_channels=2048, featmap_strides=[32])
 
-        self.temperature = 0.01
+        self.temperature = torch.nn.Parameter(torch.FloatTensor(1), requires_grad=True)
+        self.temperature.data.fill_(0.01)
+        
         # if self.ensemble:
         #     self.projection_for_image = nn.Linear(1024,512)
         #     nn.init.xavier_uniform_(self.projection_for_image.weight)
@@ -263,7 +266,6 @@ class StandardRoIHeadTEXT(StandardRoIHead):
         cls_score_text = region_embeddings @ text_features.T
         cls_score_text = cls_score_text / self.temperature
         #0.009#0.008#0.007
-        # cls_score_text = cls_score_text.softmax(dim=1)
              
         # cls_score_text[:,self.novel_label_ids] = -1e11  # 貌似不需要用,用了损失函数非常大,因为把一些值变0了,也可以该labels上
         # ipdb.set_trace()
@@ -369,11 +371,10 @@ class StandardRoIHeadTEXT(StandardRoIHead):
         text_features = torch.cat([self.text_features_for_classes,bg_class_embedding],dim=0)
         #-----------------------------------------------------
         # """
-        # ipdb.set_trace()
+        ipdb.set_trace()
         cls_score_text = region_embeddings @ text_features.T
         cls_score_text = cls_score_text / self.temperature
         #0.009#0.008#0.007
-        # cls_score_text = cls_score_text.softmax(dim=1)
         #--------------------------------------------
         # """
         cropped_embeddings = self.clip_image_forward_align(img, rois)
@@ -382,7 +383,6 @@ class StandardRoIHeadTEXT(StandardRoIHead):
         cls_score_VLM = VLM_embedding @ text_features.T
         cls_score_VLM = cls_score_VLM / self.temperature
         #0.009#0.008#0.007
-        # cls_score_VLM = cls_score_VLM.softmax(dim=1)
            
         a = 1/3
 
