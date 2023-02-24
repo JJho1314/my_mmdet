@@ -110,8 +110,9 @@ class StandardRoIHeadTEXT(StandardRoIHead):
         
         self.roialign = SingleRoIExtractor(roi_layer=dict(type='RoIAlign', output_size=7, sampling_ratio=0), out_channels=2048, featmap_strides=[32])
 
-        self.temperature = torch.nn.Parameter(torch.FloatTensor(1), requires_grad=True)
-        self.temperature.data.fill_(0.01)
+        # self.temperature = torch.nn.Parameter(torch.FloatTensor(1), requires_grad=True)
+        # self.temperature.data.fill_(0.01)
+        self.temperature = 0.01
         
         # if self.ensemble:
         #     self.projection_for_image = nn.Linear(1024,512)

@@ -9,6 +9,7 @@ from torch.nn.modules.batchnorm import _BatchNorm
 
 from ..builder import BACKBONES
 from ..utils import ResLayer
+import clip
 
 class BasicBlock(BaseModule):
     expansion = 1
@@ -453,37 +454,40 @@ class ResNet(BaseModule):
         self.stage_blocks = stage_blocks[:num_stages]
         self.inplanes = stem_channels
 
+        self.clip_model, self.preprocess = clip.load('RN50')
+        self.clip_model.cuda().eval().float().requires_grad_(False)
+
         self._make_stem_layer(in_channels, stem_channels)
 
-        self.res_layers = []
-        for i, num_blocks in enumerate(self.stage_blocks):
-            stride = strides[i]
-            dilation = dilations[i]
-            dcn = self.dcn if self.stage_with_dcn[i] else None
-            if plugins is not None:
-                stage_plugins = self.make_stage_plugins(plugins, i)
-            else:
-                stage_plugins = None
-            planes = base_channels * 2**i
-            res_layer = self.make_res_layer(
-                block=self.block,
-                inplanes=self.inplanes,
-                planes=planes,
-                num_blocks=num_blocks,
-                stride=stride,
-                dilation=dilation,
-                style=self.style,
-                avg_down=self.avg_down,
-                with_cp=with_cp,
-                conv_cfg=conv_cfg,
-                norm_cfg=norm_cfg,
-                dcn=dcn,
-                plugins=stage_plugins,
-                init_cfg=block_init_cfg)
-            self.inplanes = planes * self.block.expansion
-            layer_name = f'layer{i + 1}'
-            self.add_module(layer_name, res_layer)
-            self.res_layers.append(layer_name)
+        # self.res_layers = []
+        # for i, num_blocks in enumerate(self.stage_blocks):
+        #     stride = strides[i]
+        #     dilation = dilations[i]
+        #     dcn = self.dcn if self.stage_with_dcn[i] else None
+        #     if plugins is not None:
+        #         stage_plugins = self.make_stage_plugins(plugins, i)
+        #     else:
+        #         stage_plugins = None
+        #     planes = base_channels * 2**i
+        #     res_layer = self.make_res_layer(
+        #         block=self.block,
+        #         inplanes=self.inplanes,
+        #         planes=planes,
+        #         num_blocks=num_blocks,
+        #         stride=stride,
+        #         dilation=dilation,
+        #         style=self.style,
+        #         avg_down=self.avg_down,
+        #         with_cp=with_cp,
+        #         conv_cfg=conv_cfg,
+        #         norm_cfg=norm_cfg,
+        #         dcn=dcn,
+        #         plugins=stage_plugins,
+        #         init_cfg=block_init_cfg)
+        #     self.inplanes = planes * self.block.expansion
+        #     layer_name = f'layer{i + 1}'
+        #     self.add_module(layer_name, res_layer)
+        #     self.res_layers.append(layer_name)
 
         self._freeze_stages()
 
@@ -637,11 +641,19 @@ class ResNet(BaseModule):
             x = self.relu(x)
         x = self.maxpool(x)
         outs = []
-        for i, layer_name in enumerate(self.res_layers):
-            res_layer = getattr(self, layer_name)
-            x = res_layer(x)
-            if i in self.out_indices:
-                outs.append(x)
+        x = self.clip_model.visual.layer1(x)
+        outs.append(x)
+        x = self.clip_model.visual.layer2(x)
+        outs.append(x)
+        x = self.clip_model.visual.layer3(x)
+        outs.append(x)
+        x = self.clip_model.visual.layer4(x)
+        outs.append(x)
+        # for i, layer_name in enumerate(self.res_layers):
+        #     res_layer = getattr(self, layer_name)
+        #     x = res_layer(x)
+        #     if i in self.out_indices:
+        #         outs.append(x)
          
         return tuple(outs)
 

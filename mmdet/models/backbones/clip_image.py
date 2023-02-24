@@ -14,13 +14,13 @@ class clip_image(nn.Module):
     def __init__(self):
         super(clip_image, self).__init__()
         self.clip_model, self.preprocess = clip.load('RN50')
-        self.clip_model.cuda().eval().float()
+        self.clip_model.cuda().eval().float().requires_grad_(False)
         
-        for param in self.clip_model.parameters():
-            param.requires_grad = False
+        # for param in self.clip_model.parameters():
+        #     param.requires_grad = False
         
     def forward(self, x):
-        # ipdb.set_trace()
+        ipdb.set_trace()
         def stem(x):
             x = self.clip_model.visual.relu1(self.clip_model.visual.bn1(self.clip_model.visual.conv1(x)))
             x = self.clip_model.visual.relu2(self.clip_model.visual.bn2(self.clip_model.visual.conv2(x)))
