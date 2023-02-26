@@ -372,7 +372,7 @@ class StandardRoIHeadTEXT(StandardRoIHead):
         text_features = torch.cat([self.text_features_for_classes,bg_class_embedding],dim=0)
         #-----------------------------------------------------
         # """
-        ipdb.set_trace()
+        # ipdb.set_trace()
         cls_score_text = region_embeddings @ text_features.T
         cls_score_text = cls_score_text / self.temperature
         #0.009#0.008#0.007
