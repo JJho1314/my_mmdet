@@ -5,18 +5,21 @@ _base_ = [
 # model settings
 model = dict(
     type='FCOS',
+    # backbone=dict(
+    #     type='ResNet',
+    #     depth=50,
+    #     num_stages=4,
+    #     out_indices=(0, 1, 2, 3),
+    #     frozen_stages=1,
+    #     norm_cfg=dict(type='BN', requires_grad=False),
+    #     norm_eval=True,
+    #     style='caffe',
+    #     init_cfg=dict(
+    #         type='Pretrained',
+    #         checkpoint='open-mmlab://detectron/resnet50_caffe')),
     backbone=dict(
-        type='ResNet',
-        depth=50,
-        num_stages=4,
-        out_indices=(0, 1, 2, 3),
-        frozen_stages=1,
-        norm_cfg=dict(type='BN', requires_grad=False),
-        norm_eval=True,
-        style='caffe',
-        init_cfg=dict(
-            type='Pretrained',
-            checkpoint='open-mmlab://detectron/resnet50_caffe')),
+        type = 'clip_image'
+    ),
     neck=dict(
         type='FPN',
         in_channels=[256, 512, 1024, 2048],
