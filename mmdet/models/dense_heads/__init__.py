@@ -12,6 +12,7 @@ from .deformable_detr_head import DeformableDETRHead
 from .detr_head import DETRHead
 from .embedding_rpn_head import EmbeddingRPNHead
 from .fcos_head import FCOSHead
+from .fcos_head_text import FCOSHeadText
 from .fovea_head import FoveaHead
 from .free_anchor_retina_head import FreeAnchorRetinaHead
 from .fsaf_head import FSAFHead
@@ -54,5 +55,5 @@ __all__ = [
     'DETRHead', 'YOLOFHead', 'DeformableDETRHead', 'SOLOHead',
     'DecoupledSOLOHead', 'CenterNetHead', 'YOLOXHead',
     'DecoupledSOLOLightHead', 'LADHead', 'TOODHead', 'MaskFormerHead',
-    'Mask2FormerHead', 'SOLOV2Head', 'DDODHead'
+    'Mask2FormerHead', 'SOLOV2Head', 'DDODHead', 'FCOSHeadText'
 ]

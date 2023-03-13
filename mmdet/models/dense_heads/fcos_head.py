@@ -9,6 +9,7 @@ from mmcv.runner import force_fp32
 from mmdet.core import multi_apply, reduce_mean
 from ..builder import HEADS, build_loss
 from .anchor_free_head import AnchorFreeHead
+import ipdb
 
 INF = 1e8
 
@@ -146,6 +147,7 @@ class FCOSHead(AnchorFreeHead):
                 predictions of input feature maps.
         """
         cls_score, bbox_pred, cls_feat, reg_feat = super().forward_single(x)
+        ipdb.set_trace()
         if self.centerness_on_reg:
             centerness = self.conv_centerness(reg_feat)
         else:
