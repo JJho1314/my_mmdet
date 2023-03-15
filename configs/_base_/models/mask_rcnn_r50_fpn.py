@@ -1,4 +1,5 @@
 # model settings
+pretrained = '/data/hzf_data/hjj/my_mmdet/RN50.pth'
 model = dict(
     type='MaskRCNN',
     # backbone=dict(
@@ -6,14 +7,20 @@ model = dict(
     #     depth=50,
     #     num_stages=4,
     #     out_indices=(0, 1, 2, 3),
-    #     frozen_stages=0,
-    #     norm_cfg=dict(type='BN', requires_grad=True),
+    #     frozen_stages=4,
+    #     norm_cfg=dict(type='BN', requires_grad=False),
     #     norm_eval=True,
     #     style='pytorch',
     #     init_cfg=dict(type='Pretrained', checkpoint='torchvision://resnet50')),
     backbone=dict(
         type = 'clip_image'
     ),
+    # backbone=dict(
+    #     type = 'ModifiedResNet',
+    #     layers = [3, 4, 6, 3],
+    #     freeze_at = 4,
+    #     init_cfg=dict(type='Pretrained', checkpoint='torchvision://resnet50'),
+    # ),
     neck=dict(
         type='FPN',
         in_channels=[256, 512, 1024, 2048],
