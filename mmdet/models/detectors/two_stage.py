@@ -67,7 +67,7 @@ class TwoStageDetector(BaseDetector):
         x = self.backbone(img)
         if self.with_neck:
             x = self.neck(x)
-        return x
+        return x, self.backbone(img)[3]
 
     def forward_dummy(self, img):
         """Used for computing network flops.
@@ -76,7 +76,7 @@ class TwoStageDetector(BaseDetector):
         """
         outs = ()
         # backbone
-        x = self.extract_feat(img)
+        x, _ = self.extract_feat(img)
         # rpn
         if self.with_rpn:
             rpn_outs = self.rpn_head(x)
@@ -124,7 +124,7 @@ class TwoStageDetector(BaseDetector):
         Returns:
             dict[str, Tensor]: a dictionary of loss components
         """
-        x = self.extract_feat(img)
+        x, _ = self.extract_feat(img)
 
         losses = dict()
 
@@ -164,7 +164,7 @@ class TwoStageDetector(BaseDetector):
                                 rescale=False):
         """Async test without augmentation."""
         assert self.with_bbox, 'Bbox head must be implemented.'
-        x = self.extract_feat(img)
+        x, _ = self.extract_feat(img)
 
         if proposals is None:
             proposal_list = await self.rpn_head.async_simple_test_rpn(
@@ -179,14 +179,14 @@ class TwoStageDetector(BaseDetector):
         """Test without augmentation."""
 
         assert self.with_bbox, 'Bbox head must be implemented.'
-        x = self.extract_feat(img)
+        x, top_level_feature = self.extract_feat(img)
         if proposals is None:
             proposal_list = self.rpn_head.simple_test_rpn(x, img_metas)
         else:
             proposal_list = proposals
 
         return self.roi_head.simple_test(
-            x, img, proposal_list, img_metas, rescale=rescale)
+            x, top_level_feature, proposal_list, img_metas, rescale=rescale)
 
     def aug_test(self, imgs, img_metas, rescale=False):
         """Test with augmentations.
@@ -203,7 +203,7 @@ class TwoStageDetector(BaseDetector):
 
         img_shape = torch._shape_as_tensor(img)[2:]
         img_metas[0]['img_shape_for_onnx'] = img_shape
-        x = self.extract_feat(img)
+        x, _ = self.extract_feat(img)
         proposals = self.rpn_head.onnx_export(x, img_metas)
         if hasattr(self.roi_head, 'onnx_export'):
             return self.roi_head.onnx_export(x, proposals, img_metas)

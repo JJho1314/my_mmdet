@@ -32,6 +32,7 @@ class BBoxHead(BaseModule):
                  reg_decoded_bbox=False,
                  reg_predictor_cfg=dict(type='Linear'),
                  cls_predictor_cfg=dict(type='Linear'),
+                 iou_predictor_cfg=dict(type='Linear'),
                  loss_cls=dict(
                      type='CrossEntropyLoss',
                      use_sigmoid=False,
@@ -52,6 +53,7 @@ class BBoxHead(BaseModule):
         self.reg_decoded_bbox = reg_decoded_bbox
         self.reg_predictor_cfg = reg_predictor_cfg
         self.cls_predictor_cfg = cls_predictor_cfg
+        self.iou_predictor_cfg = iou_predictor_cfg
         self.fp16_enabled = False
 
         self.bbox_coder = build_bbox_coder(bbox_coder)

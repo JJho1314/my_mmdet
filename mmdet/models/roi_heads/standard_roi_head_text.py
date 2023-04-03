@@ -6,7 +6,7 @@ from .standard_roi_head import StandardRoIHead
 import torch.nn.functional as F
 from torch import distributed as dist
 from .visualize import visualize_oam_boxes
-from mmdet.core import (bbox2roi, bbox2result, build_assigner, merge_aug_bboxes,
+from mmdet.core import (bbox2roi, bbox2result, build_assigner, merge_aug_bboxes, bbox_overlaps, 
                         build_sampler, multiclass_nms)
 from mmcv.ops.roi_align import roi_align
 import ipdb
@@ -16,6 +16,27 @@ import os.path as osp
 import time
 from .roi_extractors.single_level_roi_extractor import SingleRoIExtractor
 
+def weighted_iou_regression_loss(iou_pred, iou_target, weight, avg_factor=None):
+    """
+
+    :param iou_pred: tensor of shape (batch*A*width*height) or (batch*num_pos)
+    :param iou_target: tensor of shape (batch*A*width*height)Or tensor of shape (batch*num_pos), store the iou between
+          predicted boxes and its corresponding groundtruth boxes for the positives and the iou between the predicted
+          boxes and anchors for negatives.
+    :param weight: tensor of shape (batch*A*width*height) or (batch*num_pos), 1 for positives and 0 for negatives and neutrals.
+    :param avg_factor:
+    :return:
+    """
+    # iou_pred_sigmoid = iou_pred.sigmoid()
+    # iou_target = iou_target.detach()
+
+    # L2 loss.
+    # loss = torch.pow((iou_pred_sigmoid - iou_target), 2)*weight
+
+    # Binary cross-entropy loss for the positive examples
+    loss = F.binary_cross_entropy_with_logits(iou_pred, iou_target, reduction='none')* weight
+
+    return torch.sum(loss)[None] / avg_factor
     
 @HEADS.register_module()
 class StandardRoIHeadTEXT(StandardRoIHead):
@@ -209,23 +230,11 @@ class StandardRoIHeadTEXT(StandardRoIHead):
 
         return losses
     
-    def Top_level_feature_extract(self, x):
-        
-        x = x.type(self.clip_model.visual.conv1.weight.dtype)
-        x = self.clip_model.visual.relu1(self.clip_model.visual.bn1(self.clip_model.visual.conv1(x)))
-        x = self.clip_model.visual.relu2(self.clip_model.visual.bn2(self.clip_model.visual.conv2(x)))
-        x = self.clip_model.visual.relu3(self.clip_model.visual.bn3(self.clip_model.visual.conv3(x)))
-        x = self.clip_model.visual.avgpool(x)
-        x = self.clip_model.visual.layer1(x)
-        x = self.clip_model.visual.layer2(x)
-        x = self.clip_model.visual.layer3(x)
-        x = self.clip_model.visual.layer4(x)
-        
-        return x.float()
     
     def clip_image_forward_align(self, img, bboxes):
-        Top_level_feature = self.Top_level_feature_extract(img)
-        # ipdb.set_trace()
+        # Top_level_feature = self.Top_level_feature_extract(img)
+        Top_level_feature = img
+        ipdb.set_trace()
         feature = []
         feature.append(Top_level_feature)
         cropped_embeddings = self.roialign(tuple(feature), bboxes)
@@ -241,12 +250,13 @@ class StandardRoIHeadTEXT(StandardRoIHead):
         if self.with_shared_head:
             bbox_feats = self.shared_head(bbox_feats)
         region_embeddings = self.bbox_head.forward_embedding(bbox_feats)
+        iou_embeddings = self.bbox_head.forward_iou_embedding(bbox_feats)
         # ipdb.set_trace()
         
-        bbox_pred = self.bbox_head(region_embeddings)
+        bbox_pred, iou_pred = self.bbox_head(region_embeddings, iou_embeddings)
         bbox_results = dict(
             bbox_pred=bbox_pred, bbox_feats=bbox_feats)
-        return bbox_results, region_embeddings
+        return bbox_results, region_embeddings, iou_pred
 
     def _bbox_forward_train(self, x, sampling_results, gt_bboxes, gt_labels,
                             img_metas):
@@ -255,27 +265,31 @@ class StandardRoIHeadTEXT(StandardRoIHead):
         input_one = x[0].new_ones(1)
         bg_class_embedding = self.bg_embedding(input_one).reshape(1, 1024)
         bg_class_embedding = torch.nn.functional.normalize(bg_class_embedding, p=2, dim=1)
-        bbox_results, region_embeddings = self._bbox_forward(x, rois)
+        bbox_results, region_embeddings, iou_pred = self._bbox_forward(x, rois)
         # ipdb.set_trace()
         bbox_targets = self.bbox_head.get_targets(sampling_results, gt_bboxes,
                                                   gt_labels, self.train_cfg)
-        labels, _, _, _ = bbox_targets
+        labels, label_weights, bbox_target, bbox_weights = bbox_targets
         
+        iou = torch.unsqueeze(bbox_overlaps(bbox_target, bbox_results['bbox_pred'], is_aligned=True), dim=1) # (batch*width_i*height_i*A)
         region_embeddings = torch.nn.functional.normalize(region_embeddings, p=2, dim=1)
         text_features = torch.cat([self.text_features_for_classes, bg_class_embedding], dim=0)
         
         cls_score_text = region_embeddings @ text_features.T
         cls_score_text = cls_score_text / self.temperature
+        
+        weight_iou = 1.0
+        loss_iou = weight_iou*weighted_iou_regression_loss(iou_pred, iou, bbox_weights, avg_factor=bbox_target.size(0))
         #0.009#0.008#0.007
              
         # cls_score_text[:,self.novel_label_ids] = -1e11  # 貌似不需要用,用了损失函数非常大,因为把一些值变0了,也可以该labels上
         # ipdb.set_trace()
         # text_cls_loss = F.cross_entropy(cls_score_text / self.temperature, labels, reduction='mean')
-
+        
         loss_bbox = self.bbox_head.loss(cls_score_text,
             bbox_results['bbox_pred'], rois,
             *bbox_targets)
-        # loss_bbox.update(text_cls_loss=text_cls_loss)
+        loss_bbox.update(loss_iou=loss_iou)
         bbox_results.update(loss_bbox=loss_bbox)
         return bbox_results
 
@@ -335,7 +349,7 @@ class StandardRoIHeadTEXT(StandardRoIHead):
 
     def simple_test_bboxes(self,
                            x,
-                           img,
+                           top_level_feature,
                            img_metas,
                            proposals,
                            rcnn_test_cfg,
@@ -378,7 +392,7 @@ class StandardRoIHeadTEXT(StandardRoIHead):
         #0.009#0.008#0.007
         #--------------------------------------------
         # """
-        cropped_embeddings = self.clip_image_forward_align(img, rois)
+        cropped_embeddings = self.clip_image_forward_align(top_level_feature, rois)
         VLM_embedding = self.clip_model.visual.attnpool(cropped_embeddings)
         
         cls_score_VLM = VLM_embedding @ text_features.T

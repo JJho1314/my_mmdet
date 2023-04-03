@@ -9,6 +9,7 @@ from mmcv.runner import force_fp32
 from mmdet.core import multi_apply, reduce_mean
 from ..builder import HEADS, build_loss
 from .anchor_free_head import AnchorFreeHead
+import ipdb
 
 INF = 1e8
 
@@ -196,6 +197,7 @@ class FCOSHead(AnchorFreeHead):
             dict[str, Tensor]: A dictionary of loss components.
         """
         assert len(cls_scores) == len(bbox_preds) == len(centernesses)
+        
         featmap_sizes = [featmap.size()[-2:] for featmap in cls_scores]
         all_level_points = self.prior_generator.grid_priors(
             featmap_sizes,
@@ -234,6 +236,7 @@ class FCOSHead(AnchorFreeHead):
         num_pos = torch.tensor(
             len(pos_inds), dtype=torch.float, device=bbox_preds[0].device)
         num_pos = max(reduce_mean(num_pos), 1.0)
+        # ipdb.set_trace()
         loss_cls = self.loss_cls(
             flatten_cls_scores, flatten_labels, avg_factor=num_pos)
 
