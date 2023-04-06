@@ -132,7 +132,8 @@ class ConvFCBBoxHead(BBoxHead):
                     override=[
                         dict(name='shared_fcs'),
                         dict(name='cls_fcs'),
-                        dict(name='reg_fcs')
+                        dict(name='reg_fcs'),
+                        dict(name='iou_fcs')
                     ])
             ]
 
