@@ -28,15 +28,15 @@ def weighted_iou_regression_loss(iou_pred, iou_target, weight, avg_factor=None):
     :param avg_factor:
     :return:
     """
-    iou_pred_sigmoid = iou_pred.sigmoid()
-    iou_target = iou_target.detach()
+    # iou_pred_sigmoid = iou_pred.sigmoid()
+    # iou_target = iou_target.detach()
 
     # L2 loss.
-    loss = torch.pow((iou_pred_sigmoid - iou_target), 2)*weight
+    # loss = torch.pow((iou_pred_sigmoid - iou_target), 2)*weight
     # ipdb.set_trace()
 
     # Binary cross-entropy loss for the positive examples
-    # loss = F.binary_cross_entropy_with_logits(iou_pred, iou_target, reduction='none')* weight
+    loss = F.binary_cross_entropy_with_logits(iou_pred, iou_target, reduction='none')* weight
 
     return torch.sum(loss)[None] / avg_factor
     
@@ -252,13 +252,12 @@ class StandardRoIHeadTEXT(StandardRoIHead):
         if self.with_shared_head:
             bbox_feats = self.shared_head(bbox_feats)
         region_embeddings = self.bbox_head.forward_embedding(bbox_feats)
-        iou_embeddings = self.bbox_head.forward_iou_embedding(bbox_feats)
         # ipdb.set_trace()
         
-        bbox_pred, iou_pred = self.bbox_head(region_embeddings, iou_embeddings)
+        bbox_pred = self.bbox_head(region_embeddings)
         bbox_results = dict(
             bbox_pred=bbox_pred, bbox_feats=bbox_feats)
-        return bbox_results, region_embeddings, iou_pred
+        return bbox_results, region_embeddings
 
     def _bbox_forward_train(self, x, sampling_results, gt_bboxes, gt_labels,
                             img_metas):
@@ -268,7 +267,7 @@ class StandardRoIHeadTEXT(StandardRoIHead):
         input_one = x[0].new_ones(1)
         bg_class_embedding = self.bg_embedding(input_one).reshape(1, 1024)
         bg_class_embedding = torch.nn.functional.normalize(bg_class_embedding, p=2, dim=1)
-        bbox_results, region_embeddings, iou_pred = self._bbox_forward(x, rois)
+        bbox_results, region_embeddings = self._bbox_forward(x, rois)
         # ipdb.set_trace()
         bbox_targets = self.bbox_head.get_targets(sampling_results, gt_bboxes,
                                                   gt_labels, self.train_cfg)
@@ -287,8 +286,6 @@ class StandardRoIHeadTEXT(StandardRoIHead):
         cls_score_text = region_embeddings @ text_features.T
         cls_score_text = cls_score_text / self.temperature
         
-        weight_iou = 1.0
-        loss_iou = weight_iou*weighted_iou_regression_loss(iou_pred, iou, bbox_weight, avg_factor=num_total_pos)
         #0.009#0.008#0.007
              
         # cls_score_text[:,self.novel_label_ids] = -1e11  # 貌似不需要用,用了损失函数非常大,因为把一些值变0了,也可以该labels上
@@ -298,7 +295,7 @@ class StandardRoIHeadTEXT(StandardRoIHead):
         loss_bbox = self.bbox_head.loss(cls_score_text,
             bbox_results['bbox_pred'], rois,
             *bbox_targets)
-        loss_bbox.update(loss_iou=loss_iou)
+
         bbox_results.update(loss_bbox=loss_bbox)
         return bbox_results
 
@@ -386,13 +383,8 @@ class StandardRoIHeadTEXT(StandardRoIHead):
         scale_factors = tuple(meta['scale_factor'] for meta in img_metas)
         rois = bbox2roi(proposals)
 
-        bbox_results,region_embeddings, iou_pred = self._bbox_forward(x,rois)
+        bbox_results,region_embeddings = self._bbox_forward(x,rois)
         
-        rois_iou = torch.squeeze(rois[iou_pred.sort(dim=0, descending = True)[1]]) 
-        rois = rois_iou
-        
-        bbox_results,region_embeddings, iou_pred = self._bbox_forward(x,rois_iou)
-  
         region_embeddings = torch.nn.functional.normalize(region_embeddings,p=2,dim=1)
         input_one = x[0].new_ones(1)
         bg_class_embedding = self.bg_embedding(input_one).unsqueeze(0)
