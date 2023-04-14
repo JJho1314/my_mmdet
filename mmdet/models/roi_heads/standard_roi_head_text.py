@@ -16,7 +16,7 @@ import os.path as osp
 import time
 from .roi_extractors.single_level_roi_extractor import SingleRoIExtractor
 
-    
+
 @HEADS.register_module()
 class StandardRoIHeadTEXT(StandardRoIHead):
     """RoI head for Double Head RCNN
@@ -24,7 +24,8 @@ class StandardRoIHeadTEXT(StandardRoIHead):
     https://arxiv.org/abs/1904.06493
     """
 
-    def __init__(self, bbox_roi_extractor=None,
+    def __init__(self,
+                 bbox_roi_extractor=None,
                  bbox_head=None,
                  mask_roi_extractor=None,
                  mask_head=None,
@@ -32,16 +33,18 @@ class StandardRoIHeadTEXT(StandardRoIHead):
                  train_cfg=None,
                  test_cfg=None,
                  load_feature=True,
-                 prompt_path=None, **kwargs):
-        super(StandardRoIHeadTEXT, self).__init__(bbox_roi_extractor=bbox_roi_extractor,
-                                              bbox_head=bbox_head,
-                                              mask_roi_extractor=mask_roi_extractor,
-                                              mask_head=mask_head,
-                                              shared_head=shared_head,
-                                              train_cfg=train_cfg,
-                                              test_cfg=test_cfg,
-                                              **kwargs)
-        
+                 prompt_path=None,
+                 **kwargs):
+        super(StandardRoIHeadTEXT,
+              self).__init__(bbox_roi_extractor=bbox_roi_extractor,
+                             bbox_head=bbox_head,
+                             mask_roi_extractor=mask_roi_extractor,
+                             mask_head=mask_head,
+                             shared_head=shared_head,
+                             train_cfg=train_cfg,
+                             test_cfg=test_cfg,
+                             **kwargs)
+
         device = "cuda" if torch.cuda.is_available() else "cpu"
         self.device = device
         if bbox_head.num_classes == 80:
@@ -54,39 +57,53 @@ class StandardRoIHeadTEXT(StandardRoIHead):
             self.CLASSES = LVIS_CLASSES
             dataset = 'lvis'
         self.num_classes = len(self.CLASSES)
-        print('num_classes:',self.num_classes)
-        
+        print('num_classes:', self.num_classes)
+
         if self.num_classes == 1203:
             self.base_label_ids = lvis_base_label_ids
-            self.novel_label_ids = torch.tensor(lvis_novel_label_ids, device=device)
+            self.novel_label_ids = torch.tensor(lvis_novel_label_ids,
+                                                device=device)
             # self.novel_index = F.pad(torch.bincount(self.novel_label_ids),(0,self.num_classes-self.novel_label_ids.max())).bool()
             # 没用到
         elif self.num_classes == 20:
-            self.novel_label_ids = torch.tensor(voc_novel_label_ids, device=device)
+            self.novel_label_ids = torch.tensor(voc_novel_label_ids,
+                                                device=device)
             # self.novel_index = F.pad(torch.bincount(self.novel_label_ids),(0,self.num_classes-self.novel_label_ids.max())).bool()
         elif self.num_classes == 80:
-            self.base_label_ids = coco_base_label_ids
-            self.novel_label_ids = torch.tensor(coco_novel_label_ids, device=device)
+            # self.base_label_ids = coco_base_label_ids
+            # self.novel_label_ids = torch.tensor(coco_novel_label_ids, device=device)
             # self.novel_index = F.pad(torch.bincount(self.novel_label_ids),(0,self.num_classes-self.novel_label_ids.max())).bool()
+            self.novel_label_ids = torch.tensor(coco_unseen_ids_train,
+                                                device=device)
+            self.unseen_label_ids_test = torch.tensor(coco_unseen_ids_test,
+                                                      device=device)
+            self.base_label_ids = torch.tensor(coco_base_label_ids,
+                                               device=device)
+
+            # ipdb.set_trace()
+            self.novel_index = F.pad(
+                torch.bincount(self.novel_label_ids),
+                (0, self.num_classes - self.novel_label_ids.max())).bool()
         self.clip_model, self.preprocess = clip.load('RN50', device)
         self.clip_model.eval().float()
         # self.reporter = MemReporter(self.clip_model)
         for param in self.clip_model.parameters():
             param.requires_grad = False
-   
+
         self.text_features_for_classes = []
         self.iters = 0
         self.ensemble = False
         self.load_feature = load_feature
         print('ensemble:{}'.format(self.ensemble))
-        print('prompt path',prompt_path)
+        print('prompt path', prompt_path)
         save_path = 'epoch_10_embedding.pth'
         if prompt_path is not None:
             save_path = prompt_path
         # save_path = dataset + '_text_embedding.pt'
         time_start = time.time()
         if osp.exists(save_path):
-            self.text_features_for_classes = torch.load(save_path).to(device).squeeze()
+            self.text_features_for_classes = torch.load(save_path).to(
+                device).squeeze()
         else:
             self.clip_model, self.preprocess = clip.load('RN50', device)
             self.clip_model.eval().float()
@@ -94,26 +111,38 @@ class StandardRoIHeadTEXT(StandardRoIHead):
             for param in self.clip_model.parameters():
                 param.requires_grad = False
             for template in tqdm(template_list):
-                text_features_for_classes = torch.cat([self.clip_model.encode_text(clip.tokenize(template.format(c)).to(device)).detach() for c in self.CLASSES])
-                self.text_features_for_classes.append(F.normalize(text_features_for_classes,dim=-1))
+                text_features_for_classes = torch.cat([
+                    self.clip_model.encode_text(
+                        clip.tokenize(template.format(c)).to(device)).detach()
+                    for c in self.CLASSES
+                ])
+                self.text_features_for_classes.append(
+                    F.normalize(text_features_for_classes, dim=-1))
 
             # ipdb.set_trace()
-            self.text_features_for_classes = torch.stack(self.text_features_for_classes).mean(dim=0)
-            torch.save(self.text_features_for_classes.detach().cpu(),save_path)
+            self.text_features_for_classes = torch.stack(
+                self.text_features_for_classes).mean(dim=0)
+            torch.save(self.text_features_for_classes.detach().cpu(), save_path)
         self.text_features_for_classes = self.text_features_for_classes.float()
-        self.text_features_for_classes = F.normalize(self.text_features_for_classes,dim=-1)
+        self.text_features_for_classes = F.normalize(
+            self.text_features_for_classes, dim=-1)
         # ipdb.set_trace()
         # reporter.report()
-        print('text embedding finished, {} passed'.format(time.time()-time_start))
-        self.bg_embedding = nn.Linear(1,1024)
+        print('text embedding finished, {} passed'.format(time.time() -
+                                                          time_start))
+        self.bg_embedding = nn.Linear(1, 1024)
         # self.projection = nn.Linear(1024,1024)
-        
-        self.roialign = SingleRoIExtractor(roi_layer=dict(type='RoIAlign', output_size=7, sampling_ratio=0), out_channels=2048, featmap_strides=[32])
+
+        self.roialign = SingleRoIExtractor(roi_layer=dict(type='RoIAlign',
+                                                          output_size=7,
+                                                          sampling_ratio=0),
+                                           out_channels=2048,
+                                           featmap_strides=[32])
 
         # self.temperature = torch.nn.Parameter(torch.FloatTensor(1), requires_grad=True)
         # self.temperature.data.fill_(0.01)
         self.temperature = 0.01
-        
+
         # if self.ensemble:
         #     self.projection_for_image = nn.Linear(1024,512)
         #     nn.init.xavier_uniform_(self.projection_for_image.weight)
@@ -124,7 +153,7 @@ class StandardRoIHeadTEXT(StandardRoIHead):
 
         # nn.init.xavier_uniform_(self.projection.weight)
         # nn.init.constant_(self.projection.bias, 0)
-    
+
     def init_bbox_head(self, bbox_roi_extractor, bbox_head):
         """Initialize ``bbox_head``"""
         self.bbox_roi_extractor = build_roi_extractor(bbox_roi_extractor)
@@ -137,13 +166,12 @@ class StandardRoIHeadTEXT(StandardRoIHead):
         rois = bbox2roi([proposals])
         if self.with_bbox:
             bbox_results = self._bbox_forward(x, rois)
-            outs = outs + (bbox_results['cls_score'],
-                           bbox_results['bbox_pred'])
+            outs = outs + (bbox_results['cls_score'], bbox_results['bbox_pred'])
         # mask head
         if self.with_mask:
             mask_rois = rois[:100]
             mask_results = self._mask_forward(x, mask_rois)
-            outs = outs + (mask_results['mask_pred'], )
+            outs = outs + (mask_results['mask_pred'],)
         return outs
 
     def forward_train(self,
@@ -195,7 +223,7 @@ class StandardRoIHeadTEXT(StandardRoIHead):
         losses = dict()
         # bbox head forward and loss
         if self.with_bbox:
-            bbox_results = self._bbox_forward_train(x,sampling_results,
+            bbox_results = self._bbox_forward_train(x, sampling_results,
                                                     gt_bboxes, gt_labels,
                                                     img_metas)
             losses.update(bbox_results['loss_bbox'])
@@ -208,21 +236,24 @@ class StandardRoIHeadTEXT(StandardRoIHead):
             losses.update(mask_results['loss_mask'])
 
         return losses
-    
+
     def Top_level_feature_extract(self, x):
-        
+
         x = x.type(self.clip_model.visual.conv1.weight.dtype)
-        x = self.clip_model.visual.relu1(self.clip_model.visual.bn1(self.clip_model.visual.conv1(x)))
-        x = self.clip_model.visual.relu2(self.clip_model.visual.bn2(self.clip_model.visual.conv2(x)))
-        x = self.clip_model.visual.relu3(self.clip_model.visual.bn3(self.clip_model.visual.conv3(x)))
+        x = self.clip_model.visual.relu1(
+            self.clip_model.visual.bn1(self.clip_model.visual.conv1(x)))
+        x = self.clip_model.visual.relu2(
+            self.clip_model.visual.bn2(self.clip_model.visual.conv2(x)))
+        x = self.clip_model.visual.relu3(
+            self.clip_model.visual.bn3(self.clip_model.visual.conv3(x)))
         x = self.clip_model.visual.avgpool(x)
         x = self.clip_model.visual.layer1(x)
         x = self.clip_model.visual.layer2(x)
         x = self.clip_model.visual.layer3(x)
         x = self.clip_model.visual.layer4(x)
-        
+
         return x.float()
-    
+
     def clip_image_forward_align(self, img, bboxes):
         Top_level_feature = self.Top_level_feature_extract(img)
         # ipdb.set_trace()
@@ -242,10 +273,9 @@ class StandardRoIHeadTEXT(StandardRoIHead):
             bbox_feats = self.shared_head(bbox_feats)
         region_embeddings = self.bbox_head.forward_embedding(bbox_feats)
         # ipdb.set_trace()
-        
+
         bbox_pred = self.bbox_head(region_embeddings)
-        bbox_results = dict(
-            bbox_pred=bbox_pred, bbox_feats=bbox_feats)
+        bbox_results = dict(bbox_pred=bbox_pred, bbox_feats=bbox_feats)
         return bbox_results, region_embeddings
 
     def _bbox_forward_train(self, x, sampling_results, gt_bboxes, gt_labels,
@@ -254,31 +284,36 @@ class StandardRoIHeadTEXT(StandardRoIHead):
         rois = bbox2roi([res.bboxes for res in sampling_results])
         input_one = x[0].new_ones(1)
         bg_class_embedding = self.bg_embedding(input_one).reshape(1, 1024)
-        bg_class_embedding = torch.nn.functional.normalize(bg_class_embedding, p=2, dim=1)
+        bg_class_embedding = torch.nn.functional.normalize(bg_class_embedding,
+                                                           p=2,
+                                                           dim=1)
         bbox_results, region_embeddings = self._bbox_forward(x, rois)
         # ipdb.set_trace()
         bbox_targets = self.bbox_head.get_targets(sampling_results, gt_bboxes,
                                                   gt_labels, self.train_cfg)
         labels, _, _, _ = bbox_targets
-        
-        region_embeddings = torch.nn.functional.normalize(region_embeddings, p=2, dim=1)
-        text_features = torch.cat([self.text_features_for_classes, bg_class_embedding], dim=0)
-        
+
+        region_embeddings = torch.nn.functional.normalize(region_embeddings,
+                                                          p=2,
+                                                          dim=1)
+        text_features = torch.cat(
+            [self.text_features_for_classes, bg_class_embedding], dim=0)
+
         cls_score_text = region_embeddings @ text_features.T
         cls_score_text = cls_score_text / self.temperature
         #0.009#0.008#0.007
-             
-        # cls_score_text[:,self.novel_label_ids] = -1e11  # 貌似不需要用,用了损失函数非常大,因为把一些值变0了,也可以该labels上
+
+        cls_score_text[:, self.
+                       novel_label_ids] = -1e11  # 貌似不需要用,用了损失函数非常大,因为把一些值变0了,也可以该labels上
         # ipdb.set_trace()
         # text_cls_loss = F.cross_entropy(cls_score_text / self.temperature, labels, reduction='mean')
 
         loss_bbox = self.bbox_head.loss(cls_score_text,
-            bbox_results['bbox_pred'], rois,
-            *bbox_targets)
+                                        bbox_results['bbox_pred'], rois,
+                                        *bbox_targets)
         # loss_bbox.update(text_cls_loss=text_cls_loss)
         bbox_results.update(loss_bbox=loss_bbox)
         return bbox_results
-
 
     def _mask_forward_train(self, x, sampling_results, bbox_feats, gt_masks,
                             img_metas):
@@ -292,29 +327,27 @@ class StandardRoIHeadTEXT(StandardRoIHead):
             device = bbox_feats.device
             for res in sampling_results:
                 pos_inds.append(
-                    torch.ones(
-                        res.pos_bboxes.shape[0],
-                        device=device,
-                        dtype=torch.bool))
+                    torch.ones(res.pos_bboxes.shape[0],
+                               device=device,
+                               dtype=torch.bool))
                 pos_inds.append(
-                    torch.zeros(
-                        res.neg_bboxes.shape[0],
-                        device=device,
-                        dtype=torch.bool))
+                    torch.zeros(res.neg_bboxes.shape[0],
+                                device=device,
+                                dtype=torch.bool))
             pos_inds = torch.cat(pos_inds)
 
-            mask_results = self._mask_forward(
-                x, pos_inds=pos_inds, bbox_feats=bbox_feats)
+            mask_results = self._mask_forward(x,
+                                              pos_inds=pos_inds,
+                                              bbox_feats=bbox_feats)
 
         mask_targets = self.mask_head.get_targets(sampling_results, gt_masks,
                                                   self.train_cfg)
         pos_labels = torch.cat([res.pos_gt_labels for res in sampling_results])
-        loss_mask = self.mask_head.loss(mask_results['mask_pred'],
-                                        mask_targets, pos_labels)
+        loss_mask = self.mask_head.loss(mask_results['mask_pred'], mask_targets,
+                                        pos_labels)
 
         mask_results.update(loss_mask=loss_mask, mask_targets=mask_targets)
         return mask_results
-
 
     def _mask_forward(self, x, rois=None, pos_inds=None, bbox_feats=None):
         """Mask head forward function used in both training and testing."""
@@ -363,39 +396,60 @@ class StandardRoIHeadTEXT(StandardRoIHead):
         scale_factors = tuple(meta['scale_factor'] for meta in img_metas)
         rois = bbox2roi(proposals)
 
-        bbox_results,region_embeddings = self._bbox_forward(x,rois)
-  
-        region_embeddings = torch.nn.functional.normalize(region_embeddings,p=2,dim=1)
+        bbox_results, region_embeddings = self._bbox_forward(x, rois)
+
+        region_embeddings = torch.nn.functional.normalize(region_embeddings,
+                                                          p=2,
+                                                          dim=1)
         input_one = x[0].new_ones(1)
         bg_class_embedding = self.bg_embedding(input_one).unsqueeze(0)
-        bg_class_embedding = torch.nn.functional.normalize(bg_class_embedding,p=2,dim=1)
-        text_features = torch.cat([self.text_features_for_classes,bg_class_embedding],dim=0)
+        bg_class_embedding = torch.nn.functional.normalize(bg_class_embedding,
+                                                           p=2,
+                                                           dim=1)
+        text_features = torch.cat(
+            [self.text_features_for_classes, bg_class_embedding], dim=0)
         #-----------------------------------------------------
         # """
         # ipdb.set_trace()
         cls_score_text = region_embeddings @ text_features.T
+
+        if self.num_classes == 80:
+            cls_score_text[:, self.unseen_label_ids_test] = -1e11
+            # cls_score_text[:,self.base_label_ids] = -1e11
+
         cls_score_text = cls_score_text / self.temperature
         #0.009#0.008#0.007
+        cls_score_text = cls_score_text.softmax(dim=1)
         #--------------------------------------------
         # """
         cropped_embeddings = self.clip_image_forward_align(img, rois)
         VLM_embedding = self.clip_model.visual.attnpool(cropped_embeddings)
-        
+
         cls_score_VLM = VLM_embedding @ text_features.T
+        if self.num_classes == 80:
+            cls_score_VLM[:, self.unseen_label_ids_test] = -1e11
+            # cls_score_VLM[:,self.base_label_ids] = -1e11
         cls_score_VLM = cls_score_VLM / self.temperature
         #0.009#0.008#0.007
-           
-        a = 1/3
+        cls_score_VLM = cls_score_VLM.softmax(dim=1)
 
-        # cls_score= torch.where(self.novel_index,cls_score_VLM**(1-a)*cls_score_text**a,
-        #                 cls_score_text**(1-a)*cls_score_VLM**a)
+        # a = 1 / 3
+        a = 0.2
+        b = 0.45
+
+        cls_score = torch.where(self.novel_index,
+                                cls_score_VLM**b * cls_score_text**(1 - b),
+                                cls_score_text**(1 - a) * cls_score_VLM**a)
+        # 计算Novel类的mAP
+        # cls_score_novel=cls_score_VLM**b * cls_score_text**a
+        # cls_score=cls_score_novel
 
         # cls_score_align= torch.where(self.novel_index,cls_score_clip_align**(1-a)*cls_score_text**a,
-                        #    cls_score_text**(1-a)*cls_score_clip_align**a)
-        cls_score = cls_score_text
+        #    cls_score_text**(1-a)*cls_score_clip_align**a)
+        # cls_score = cls_score_text
         # cls_score = cls_score_image
         # ipdb.set_trace()
-        
+
         bbox_pred = bbox_results['bbox_pred']
         num_proposals_per_img = tuple(len(p) for p in proposals)
         rois = rois.split(num_proposals_per_img, 0)
@@ -416,7 +470,8 @@ class StandardRoIHeadTEXT(StandardRoIHead):
         det_bboxes = []
         det_labels = []
         for i in range(len(proposals)):
-            det_bbox, det_label = self.bbox_head.get_bboxes(
+            # 修改get_bboxes(),函数内不含softmax
+            det_bbox, det_label = self.bbox_head.my_get_bboxes(
                 rois[i],
                 cls_score[i],
                 bbox_pred[i],
@@ -438,12 +493,19 @@ class StandardRoIHeadTEXT(StandardRoIHead):
         """Test without augmentation."""
         assert self.with_bbox, 'Bbox head must be implemented.'
 
-        det_bboxes, det_labels = self.simple_test_bboxes(
-            x, img, img_metas, proposal_list, self.test_cfg, rescale=rescale)
+        det_bboxes, det_labels = self.simple_test_bboxes(x,
+                                                         img,
+                                                         img_metas,
+                                                         proposal_list,
+                                                         self.test_cfg,
+                                                         rescale=rescale)
         if torch.onnx.is_in_onnx_export():
             if self.with_mask:
-                segm_results = self.simple_test_mask(
-                    x, img_metas, det_bboxes, det_labels, rescale=rescale)
+                segm_results = self.simple_test_mask(x,
+                                                     img_metas,
+                                                     det_bboxes,
+                                                     det_labels,
+                                                     rescale=rescale)
                 return det_bboxes, det_labels, segm_results
             else:
                 return det_bboxes, det_labels
@@ -457,8 +519,9 @@ class StandardRoIHeadTEXT(StandardRoIHead):
         if not self.with_mask:
             return bbox_results
         else:
-            segm_results = self.simple_test_mask(
-                x, img_metas, det_bboxes, det_labels, rescale=rescale)
+            segm_results = self.simple_test_mask(x,
+                                                 img_metas,
+                                                 det_bboxes,
+                                                 det_labels,
+                                                 rescale=rescale)
             return list(zip(bbox_results, segm_results))
-
-    

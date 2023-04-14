@@ -141,7 +141,7 @@ mmdet/datasets/samplers/infinite_sampler.py
 mmdet/models/__init__.py
 mmdet/models/builder.py
 mmdet/models/backbones/__init__.py
-mmdet/models/backbones/clip.py
+mmdet/models/backbones/clip_image.py
 mmdet/models/backbones/csp_darknet.py
 mmdet/models/backbones/darknet.py
 mmdet/models/backbones/detectors_resnet.py
@@ -150,7 +150,6 @@ mmdet/models/backbones/efficientnet.py
 mmdet/models/backbones/hourglass.py
 mmdet/models/backbones/hrnet.py
 mmdet/models/backbones/mobilenet_v2.py
-mmdet/models/backbones/model.py
 mmdet/models/backbones/pvt.py
 mmdet/models/backbones/regnet.py
 mmdet/models/backbones/res2net.py

@@ -18,30 +18,40 @@ import logging
 import torch
 import torch.distributed as dist
 
+
 def fix_bn(m):
     classname = m.__class__.__name__
     if classname.find('BatchNorm2d') != -1:
         m.eval()
 
+
 @BACKBONES.register_module()
 class clip_image(nn.Module):
+
     def __init__(self):
         super(clip_image, self).__init__()
+        # ipdb.set_trace()
+
         self.clip_model, self.preprocess = clip.load('RN50')
         self.clip_model.cuda().eval().float().requires_grad_(False)
         self.clip_model.apply(fix_bn)
-        self.clip_model.visual.bn1.eval()
+        # self.clip_model.visual.bn1.eval()
         # for param in self.clip_model.parameters():
         #     param.requires_grad = False
-        
+
     def forward(self, x):
         # ipdb.set_trace()
+
         def stem(x):
-            x = self.clip_model.visual.relu1(self.clip_model.visual.bn1(self.clip_model.visual.conv1(x)))
-            x = self.clip_model.visual.relu2(self.clip_model.visual.bn2(self.clip_model.visual.conv2(x)))
-            x = self.clip_model.visual.relu3(self.clip_model.visual.bn3(self.clip_model.visual.conv3(x)))
+            x = self.clip_model.visual.relu1(
+                self.clip_model.visual.bn1(self.clip_model.visual.conv1(x)))
+            x = self.clip_model.visual.relu2(
+                self.clip_model.visual.bn2(self.clip_model.visual.conv2(x)))
+            x = self.clip_model.visual.relu3(
+                self.clip_model.visual.bn3(self.clip_model.visual.conv3(x)))
             x = self.clip_model.visual.avgpool(x)
             return x
+
         self.clip_model.apply(fix_bn)
 
         outs = []
@@ -55,8 +65,9 @@ class clip_image(nn.Module):
         outs.append(x)
         x = self.clip_model.visual.layer4(x)
         outs.append(x)
-      
+
         return tuple(outs)
+
 
 class FrozenBatchNorm2d(BaseModule):
     """
@@ -112,40 +123,43 @@ class FrozenBatchNorm2d(BaseModule):
                 eps=self.eps,
             )
 
-    def _load_from_state_dict(
-        self, state_dict, prefix, local_metadata, strict, missing_keys, unexpected_keys, error_msgs
-    ):
+    def _load_from_state_dict(self, state_dict, prefix, local_metadata, strict,
+                              missing_keys, unexpected_keys, error_msgs):
         version = local_metadata.get("version", None)
 
         if version is None or version < 2:
             # when use offline modules, avoid overwriting running mean and var for loaded weights
             skip_reset = False
-            for k_n in state_dict: # checkpoint weights
-                if 'ignore_others' in k_n: #if 'offline' in k_n:
+            for k_n in state_dict:  # checkpoint weights
+                if 'ignore_others' in k_n:  #if 'offline' in k_n:
                     skip_reset = True
             if not skip_reset:
                 # No running_mean/var in early versions
                 # This will silent the warnings
                 if prefix + "running_mean" not in state_dict:
-                    state_dict[prefix + "running_mean"] = torch.zeros_like(self.running_mean)
+                    state_dict[prefix + "running_mean"] = torch.zeros_like(
+                        self.running_mean)
                 if prefix + "running_var" not in state_dict:
-                    state_dict[prefix + "running_var"] = torch.ones_like(self.running_var)
+                    state_dict[prefix + "running_var"] = torch.ones_like(
+                        self.running_var)
 
         # NOTE: if a checkpoint is trained with BatchNorm and loaded (together with
         # version number) to FrozenBatchNorm, running_var will be wrong. One solution
         # is to remove the version number from the checkpoint.
         if version is not None and version < 3:
             logger = logging.getLogger(__name__)
-            logger.info("FrozenBatchNorm {} is upgraded to version 3.".format(prefix.rstrip(".")))
+            logger.info("FrozenBatchNorm {} is upgraded to version 3.".format(
+                prefix.rstrip(".")))
             # In version < 3, running_var are used without +eps.
             state_dict[prefix + "running_var"] -= self.eps
 
-        super()._load_from_state_dict(
-            state_dict, prefix, local_metadata, strict, missing_keys, unexpected_keys, error_msgs
-        )
+        super()._load_from_state_dict(state_dict, prefix, local_metadata,
+                                      strict, missing_keys, unexpected_keys,
+                                      error_msgs)
 
     def __repr__(self):
-        return "FrozenBatchNorm2d(num_features={}, eps={})".format(self.num_features, self.eps)
+        return "FrozenBatchNorm2d(num_features={}, eps={})".format(
+            self.num_features, self.eps)
 
     @classmethod
     def convert_frozen_batchnorm(cls, module):
@@ -179,11 +193,12 @@ class FrozenBatchNorm2d(BaseModule):
                 if new_child is not child:
                     res.add_module(name, new_child)
         return res
-    
+
+
 class Bottleneck(BaseModule):
     expansion = 4
 
-    def __init__(self, inplanes, planes, stride=1, init_cfg = None):
+    def __init__(self, inplanes, planes, stride=1, init_cfg=None):
         super(Bottleneck, self).__init__(init_cfg)
 
         # all conv layers have stride 1. an avgpool is performed after the second convolution when stride > 1
@@ -206,11 +221,16 @@ class Bottleneck(BaseModule):
 
         if stride > 1 or inplanes != planes * Bottleneck.expansion:
             # downsampling layer is prepended with an avgpool, and the subsequent convolution has stride 1
-            self.downsample = nn.Sequential(OrderedDict([
-                ("-1", nn.AvgPool2d(stride)),
-                ("0", nn.Conv2d(inplanes, planes * self.expansion, 1, stride=1, bias=False)),
-                ("1", FrozenBatchNorm2d(planes * self.expansion))
-            ]))
+            self.downsample = nn.Sequential(
+                OrderedDict([("-1", nn.AvgPool2d(stride)),
+                             ("0",
+                              nn.Conv2d(inplanes,
+                                        planes * self.expansion,
+                                        1,
+                                        stride=1,
+                                        bias=False)),
+                             ("1", FrozenBatchNorm2d(planes * self.expansion))
+                            ]))
 
     def forward(self, x: torch.Tensor):
         identity = x
@@ -227,7 +247,7 @@ class Bottleneck(BaseModule):
         out = self.relu3(out)
         return out
 
-    
+
 @BACKBONES.register_module()
 class ModifiedResNet(BaseModule):
     """
@@ -237,18 +257,36 @@ class ModifiedResNet(BaseModule):
     - The final pooling layer is a QKV attention instead of an average pool
     """
 
-    def __init__(self, layers, freeze_at, input_resolution=224, width=64, init_cfg=None):
-        super(ModifiedResNet,self).__init__(init_cfg)
+    def __init__(self,
+                 layers,
+                 freeze_at,
+                 input_resolution=224,
+                 width=64,
+                 init_cfg=None):
+        super(ModifiedResNet, self).__init__(init_cfg)
         self.input_resolution = input_resolution
 
         # the 3-layer stem
-        self.conv1 = nn.Conv2d(3, width // 2, kernel_size=3, stride=2, padding=1, bias=False)
+        self.conv1 = nn.Conv2d(3,
+                               width // 2,
+                               kernel_size=3,
+                               stride=2,
+                               padding=1,
+                               bias=False)
         self.bn1 = FrozenBatchNorm2d(width // 2)
         self.relu1 = nn.ReLU(inplace=True)
-        self.conv2 = nn.Conv2d(width // 2, width // 2, kernel_size=3, padding=1, bias=False)
+        self.conv2 = nn.Conv2d(width // 2,
+                               width // 2,
+                               kernel_size=3,
+                               padding=1,
+                               bias=False)
         self.bn2 = FrozenBatchNorm2d(width // 2)
         self.relu2 = nn.ReLU(inplace=True)
-        self.conv3 = nn.Conv2d(width // 2, width, kernel_size=3, padding=1, bias=False)
+        self.conv3 = nn.Conv2d(width // 2,
+                               width,
+                               kernel_size=3,
+                               padding=1,
+                               bias=False)
         self.bn3 = FrozenBatchNorm2d(width)
         self.relu3 = nn.ReLU(inplace=True)
         self.avgpool = nn.AvgPool2d(2)
@@ -259,7 +297,7 @@ class ModifiedResNet(BaseModule):
         self.layer2 = self._make_layer(width * 2, layers[1], stride=2)
         self.layer3 = self._make_layer(width * 4, layers[2], stride=2)
         self.layer4 = self._make_layer(width * 8, layers[3], stride=2)
-        
+
         self.freeze(freeze_at)
 
     def _make_layer(self, planes, blocks, stride=1):
@@ -272,6 +310,7 @@ class ModifiedResNet(BaseModule):
         return nn.Sequential(*layers)
 
     def forward(self, x):
+
         def stem(x):
             x = self.relu1(self.bn1(self.conv1(x)))
             x = self.relu2(self.bn2(self.conv2(x)))
@@ -292,7 +331,7 @@ class ModifiedResNet(BaseModule):
         out.append(x)
 
         return tuple(out)
-    
+
     def freeze(self, freeze_at=0):
         """
         Freeze the first several stages of the ResNet. Commonly used in
@@ -309,6 +348,7 @@ class ModifiedResNet(BaseModule):
         Returns:
             nn.Module: this ResNet itself
         """
+
         def cnnblockbase_freeze(nn_module):
             """
             Make this block not trainable.
@@ -321,8 +361,8 @@ class ModifiedResNet(BaseModule):
             for p in nn_module.parameters():
                 p.requires_grad = False
             FrozenBatchNorm2d.convert_frozen_batchnorm(nn_module)
-        
-        if freeze_at >= 1: # stem
+
+        if freeze_at >= 1:  # stem
             cnnblockbase_freeze(self.conv1)
             cnnblockbase_freeze(self.bn1)
             cnnblockbase_freeze(self.conv2)
@@ -330,24 +370,30 @@ class ModifiedResNet(BaseModule):
             cnnblockbase_freeze(self.conv3)
             cnnblockbase_freeze(self.bn3)
         # each stage is a torch.nn.modules.container.Sequential
-        for idx, stage in enumerate([self.layer1, self.layer2, self.layer3, self.layer4], start=2): 
+        for idx, stage in enumerate(
+            [self.layer1, self.layer2, self.layer3, self.layer4], start=2):
             if freeze_at >= idx:
                 for block in stage.children():  # each block is a Bottleneck
-                    cnnblockbase_freeze(block)  
+                    cnnblockbase_freeze(block)
         return self
- 
-@BACKBONES.register_module()    
+
+
+@BACKBONES.register_module()
 def ModifiedResNet50(layers, freeze_at):
-    
+
     resnet50 = ModifiedResNet(layers, freeze_at)
-    
+
     net_dict = resnet50.state_dict()
     # ipdb.set_trace()
-    pretrained_model = torch.jit.load('/home/work/.cache/clip/RN50.pt',map_location=torch.device('cpu'))
-    
-    state_dict = {k: v for k, v in pretrained_model.state_dict().items() if k in net_dict.keys()}
+    pretrained_model = torch.jit.load('/home/work/.cache/clip/RN50.pt',
+                                      map_location=torch.device('cpu'))
+
+    state_dict = {
+        k: v
+        for k, v in pretrained_model.state_dict().items()
+        if k in net_dict.keys()
+    }
     net_dict.update(state_dict)
     resnet50.load_state_dict(net_dict)
-    
-    return resnet50
 
+    return resnet50

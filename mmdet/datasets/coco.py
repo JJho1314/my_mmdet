@@ -1,4 +1,4 @@
-# Copyright (c) OpenMMLab. All rights reserved.
+# # Copyright (c) OpenMMLab. All rights reserved.
 import contextlib
 import io
 import itertools
@@ -17,6 +17,7 @@ from mmdet.core import eval_recalls
 from .api_wrappers import COCO, COCOeval
 from .builder import DATASETS
 from .custom import CustomDataset
+import ipdb
 
 
 @DATASETS.register_module()
@@ -33,20 +34,20 @@ class CocoDataset(CustomDataset):
                'banana', 'apple', 'sandwich', 'orange', 'broccoli', 'carrot',
                'hot dog', 'pizza', 'donut', 'cake', 'chair', 'couch',
                'potted plant', 'bed', 'dining table', 'toilet', 'tv', 'laptop',
-               'mouse', 'remote', 'keyboard', 'cell phone', 'microwave',
-               'oven', 'toaster', 'sink', 'refrigerator', 'book', 'clock',
-               'vase', 'scissors', 'teddy bear', 'hair drier', 'toothbrush')
+               'mouse', 'remote', 'keyboard', 'cell phone', 'microwave', 'oven',
+               'toaster', 'sink', 'refrigerator', 'book', 'clock', 'vase',
+               'scissors', 'teddy bear', 'hair drier', 'toothbrush')
 
     PALETTE = [(220, 20, 60), (119, 11, 32), (0, 0, 142), (0, 0, 230),
-               (106, 0, 228), (0, 60, 100), (0, 80, 100), (0, 0, 70),
-               (0, 0, 192), (250, 170, 30), (100, 170, 30), (220, 220, 0),
-               (175, 116, 175), (250, 0, 30), (165, 42, 42), (255, 77, 255),
-               (0, 226, 252), (182, 182, 255), (0, 82, 0), (120, 166, 157),
-               (110, 76, 0), (174, 57, 255), (199, 100, 0), (72, 0, 118),
-               (255, 179, 240), (0, 125, 92), (209, 0, 151), (188, 208, 182),
-               (0, 220, 176), (255, 99, 164), (92, 0, 73), (133, 129, 255),
-               (78, 180, 255), (0, 228, 0), (174, 255, 243), (45, 89, 255),
-               (134, 134, 103), (145, 148, 174), (255, 208, 186),
+               (106, 0, 228), (0, 60, 100), (0, 80, 100),
+               (0, 0, 70), (0, 0, 192), (250, 170, 30), (100, 170, 30),
+               (220, 220, 0), (175, 116, 175), (250, 0, 30), (165, 42, 42),
+               (255, 77, 255), (0, 226, 252), (182, 182, 255), (0, 82, 0),
+               (120, 166, 157), (110, 76, 0), (174, 57, 255), (199, 100, 0),
+               (72, 0, 118), (255, 179, 240), (0, 125, 92), (209, 0, 151),
+               (188, 208, 182), (0, 220, 176), (255, 99, 164), (92, 0, 73),
+               (133, 129, 255), (78, 180, 255), (0, 228, 0), (174, 255, 243),
+               (45, 89, 255), (134, 134, 103), (145, 148, 174), (255, 208, 186),
                (197, 226, 255), (171, 134, 1), (109, 63, 54), (207, 138, 255),
                (151, 0, 95), (9, 80, 61), (84, 105, 51), (74, 65, 105),
                (166, 196, 102), (208, 195, 210), (255, 109, 65), (0, 143, 149),
@@ -72,10 +73,58 @@ class CocoDataset(CustomDataset):
         self.coco = COCO(ann_file)
         # The order of returned `cat_ids` will not
         # change with the order of the CLASSES
+        # ipdb.set_trace()
+        self.ignore_ids_train = [
+            4, 5, 9, 10, 11, 12, 15, 16, 19, 20, 25, 27, 31, 32, 34, 35, 36, 38,
+            40, 41, 43, 52, 55, 57, 58, 60, 66, 67, 71, 76, 77, 78
+        ]
+        self.ignore_ids_test = [
+            9, 10, 11, 12, 32, 34, 35, 38, 40, 52, 58, 60, 67, 77, 78
+        ]
+        CLASSES_for_evaluate = []  # 测试mAP
+        CLASSES_for_evaluate_novel = []  #测试Novel AP
+        CLASSES_for_evaluate_base = []  #测试Base AP
+
+        if self.test_mode:
+            for id in range(len(self.CLASSES)):
+                if id not in self.ignore_ids_test:
+                    CLASSES_for_evaluate.append(self.CLASSES[id])
+            self.cat_ids_for_evaluate = self.coco.get_cat_ids(
+                cat_names=CLASSES_for_evaluate)
+            for id in range(len(self.CLASSES)):
+                if id not in self.ignore_ids_test and id in self.ignore_ids_train:
+                    CLASSES_for_evaluate_novel.append(self.CLASSES[id])
+            self.cat_ids_for_evaluate_novel = self.coco.get_cat_ids(
+                cat_names=CLASSES_for_evaluate_novel)
+            for id in range(len(self.CLASSES)):
+                if id not in self.ignore_ids_train:
+                    CLASSES_for_evaluate_base.append(self.CLASSES[id])
+            self.cat_ids_for_evaluate_base = self.coco.get_cat_ids(
+                cat_names=CLASSES_for_evaluate_base)
+
         self.cat_ids = self.coco.get_cat_ids(cat_names=self.CLASSES)
 
         self.cat2label = {cat_id: i for i, cat_id in enumerate(self.cat_ids)}
         self.img_ids = self.coco.get_img_ids()
+        self.ignore_cats = []
+        cats = {}
+        # self.img_ids = self.img_ids[:50]
+        # ipdb.set_trace()
+        if self.test_mode:
+            for cat in self.coco.cats:
+                if cat in self.cat_ids and self.cat2label[
+                        cat] not in self.ignore_ids_test:
+                    cats[cat] = self.coco.cats[cat]
+                else:
+                    self.ignore_cats.append(cat)
+            self.coco.cats = cats
+        else:
+            for cat in self.coco.cats:
+                # if self.cat2label[cat] not in self.ignore_ids_train:
+                if self.cat2label[cat] not in self.ignore_ids_test:
+                    cats[cat] = self.coco.cats[cat]
+                else:
+                    self.ignore_cats.append(cat)
         data_infos = []
         total_ann_ids = []
         for i in self.img_ids:
@@ -161,6 +210,10 @@ class CocoDataset(CustomDataset):
         for i, ann in enumerate(ann_info):
             if ann.get('ignore', False):
                 continue
+
+            if ann['category_id'] in self.ignore_cats:
+                # print('ignore {}'.format(ann['category_id']))
+                continue
             x1, y1, w, h = ann['bbox']
             inter_w = max(0, min(x1 + w, img_info['width']) - max(x1, 0))
             inter_h = max(0, min(y1 + h, img_info['height']) - max(y1, 0))
@@ -192,12 +245,11 @@ class CocoDataset(CustomDataset):
 
         seg_map = img_info['filename'].rsplit('.', 1)[0] + self.seg_suffix
 
-        ann = dict(
-            bboxes=gt_bboxes,
-            labels=gt_labels,
-            bboxes_ignore=gt_bboxes_ignore,
-            masks=gt_masks_ann,
-            seg_map=seg_map)
+        ann = dict(bboxes=gt_bboxes,
+                   labels=gt_labels,
+                   bboxes_ignore=gt_bboxes_ignore,
+                   masks=gt_masks_ann,
+                   seg_map=seg_map)
 
         return ann
 
@@ -350,8 +402,11 @@ class CocoDataset(CustomDataset):
                 bboxes = np.zeros((0, 4))
             gt_bboxes.append(bboxes)
 
-        recalls = eval_recalls(
-            gt_bboxes, results, proposal_nums, iou_thrs, logger=logger)
+        recalls = eval_recalls(gt_bboxes,
+                               results,
+                               proposal_nums,
+                               iou_thrs,
+                               logger=logger)
         ar = recalls.mean(axis=1)
         return ar
 
@@ -389,10 +444,12 @@ class CocoDataset(CustomDataset):
                           coco_gt,
                           metrics,
                           logger=None,
-                          classwise=False,
+                          classwise=True,
                           proposal_nums=(100, 300, 1000),
                           iou_thrs=None,
-                          metric_items=None):
+                          metric_items=None,
+                          eval_novel=False,
+                          eval_base=False):
         """Instance segmentation and object detection evaluation in COCO
         protocol.
 
@@ -425,8 +482,10 @@ class CocoDataset(CustomDataset):
             dict[str, float]: COCO style evaluation metric.
         """
         if iou_thrs is None:
-            iou_thrs = np.linspace(
-                .5, 0.95, int(np.round((0.95 - .5) / .05)) + 1, endpoint=True)
+            iou_thrs = np.linspace(.5,
+                                   0.95,
+                                   int(np.round((0.95 - .5) / .05)) + 1,
+                                   endpoint=True)
         if metric_items is not None:
             if not isinstance(metric_items, list):
                 metric_items = [metric_items]
@@ -442,8 +501,10 @@ class CocoDataset(CustomDataset):
                 if isinstance(results[0], tuple):
                     raise KeyError('proposal_fast is not supported for '
                                    'instance segmentation result.')
-                ar = self.fast_eval_recall(
-                    results, proposal_nums, iou_thrs, logger='silent')
+                ar = self.fast_eval_recall(results,
+                                           proposal_nums,
+                                           iou_thrs,
+                                           logger='silent')
                 log_msg = []
                 for i, num in enumerate(proposal_nums):
                     eval_results[f'AR@{num}'] = ar[i]
@@ -474,14 +535,20 @@ class CocoDataset(CustomDataset):
                         UserWarning)
                 coco_det = coco_gt.loadRes(predictions)
             except IndexError:
-                print_log(
-                    'The testing results of the whole dataset is empty.',
-                    logger=logger,
-                    level=logging.ERROR)
+                print_log('The testing results of the whole dataset is empty.',
+                          logger=logger,
+                          level=logging.ERROR)
                 break
 
             cocoEval = COCOeval(coco_gt, coco_det, iou_type)
-            cocoEval.params.catIds = self.cat_ids
+            # cocoEval.params.catIds = self.cat_ids
+            # ipdb.set_trace()
+            if eval_novel:
+                cocoEval.params.catIds = self.cat_ids_for_evaluate_novel
+            elif eval_base:
+                cocoEval.params.catIds = self.cat_ids_for_evaluate_base
+            else:
+                cocoEval.params.catIds = self.cat_ids_for_evaluate
             cocoEval.params.imgIds = self.img_ids
             cocoEval.params.maxDets = list(proposal_nums)
             cocoEval.params.iouThrs = iou_thrs
@@ -519,8 +586,8 @@ class CocoDataset(CustomDataset):
 
                 if metric_items is None:
                     metric_items = [
-                        'AR@100', 'AR@300', 'AR@1000', 'AR_s@1000',
-                        'AR_m@1000', 'AR_l@1000'
+                        'AR@100', 'AR@300', 'AR@1000', 'AR_s@1000', 'AR_m@1000',
+                        'AR_l@1000'
                     ]
 
                 for item in metric_items:
@@ -542,10 +609,21 @@ class CocoDataset(CustomDataset):
                     # from https://github.com/facebookresearch/detectron2/
                     precisions = cocoEval.eval['precision']
                     # precision: (iou, recall, cls, area range, max dets)
-                    assert len(self.cat_ids) == precisions.shape[2]
-
+                    # assert len(self.cat_ids) == precisions.shape[2]
+                    if eval_novel:
+                        assert len(self.cat_ids_for_evaluate_novel
+                                  ) == precisions.shape[2]
+                        eval_id = self.cat_ids_for_evaluate_novel
+                    elif eval_base:
+                        assert len(self.cat_ids_for_evaluate_base
+                                  ) == precisions.shape[2]
+                        eval_id = self.cat_ids_for_evaluate_base
+                    else:
+                        assert len(
+                            self.cat_ids_for_evaluate) == precisions.shape[2]
+                        eval_id = self.cat_ids_for_evaluate
                     results_per_category = []
-                    for idx, catId in enumerate(self.cat_ids):
+                    for idx, catId in enumerate(eval_id):
                         # area range index 0: all area ranges
                         # max dets index -1: typically 100 per image
                         nm = self.coco.loadCats(catId)[0]
@@ -579,8 +657,7 @@ class CocoDataset(CustomDataset):
                 for metric_item in metric_items:
                     key = f'{metric}_{metric_item}'
                     val = float(
-                        f'{cocoEval.stats[coco_metric_names[metric_item]]:.3f}'
-                    )
+                        f'{cocoEval.stats[coco_metric_names[metric_item]]:.3f}')
                     eval_results[key] = val
                 ap = cocoEval.stats[:6]
                 eval_results[f'{metric}_mAP_copypaste'] = (
@@ -594,10 +671,12 @@ class CocoDataset(CustomDataset):
                  metric='bbox',
                  logger=None,
                  jsonfile_prefix=None,
-                 classwise=False,
+                 classwise=True,
                  proposal_nums=(100, 300, 1000),
                  iou_thrs=None,
-                 metric_items=None):
+                 metric_items=None,
+                 eval_novel=False,
+                 eval_base=False):
         """Evaluation in COCO protocol.
 
         Args:
@@ -642,7 +721,8 @@ class CocoDataset(CustomDataset):
         eval_results = self.evaluate_det_segm(results, result_files, coco_gt,
                                               metrics, logger, classwise,
                                               proposal_nums, iou_thrs,
-                                              metric_items)
+                                              metric_items, eval_novel,
+                                              eval_base)
 
         if tmp_dir is not None:
             tmp_dir.cleanup()
