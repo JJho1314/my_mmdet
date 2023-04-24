@@ -171,6 +171,7 @@ class StandardRoIHeadTEXT(StandardRoIHead):
 
     def forward_train(self,
                       x,
+                      top_level_feature,
                       img_metas,
                       proposal_list,
                       gt_bboxes,
@@ -218,19 +219,20 @@ class StandardRoIHeadTEXT(StandardRoIHead):
         losses = dict()
         # bbox head forward and loss
         if self.with_bbox:
-            bbox_results = self._bbox_forward_train(x,sampling_results,
+            region_embeddings, VLM_embedding, text_features, labels = self._bbox_forward_train(x,top_level_feature,
+                                                    sampling_results,
                                                     gt_bboxes, gt_labels,
                                                     img_metas)
-            losses.update(bbox_results['loss_bbox'])
+            # losses.update(bbox_results['loss_bbox'])
 
         # mask head forward and loss
-        if self.with_mask:
-            mask_results = self._mask_forward_train(x, sampling_results,
-                                                    bbox_results['bbox_feats'],
-                                                    gt_masks, img_metas)
-            losses.update(mask_results['loss_mask'])
+        # if self.with_mask:
+        #     mask_results = self._mask_forward_train(x, sampling_results,
+        #                                             bbox_results['bbox_feats'],
+        #                                             gt_masks, img_metas)
+        #     losses.update(mask_results['loss_mask'])
 
-        return losses
+        return region_embeddings, VLM_embedding, text_features, labels
     
     
     def clip_image_forward_align(self, img, bboxes):
@@ -259,7 +261,7 @@ class StandardRoIHeadTEXT(StandardRoIHead):
             bbox_pred=bbox_pred, bbox_feats=bbox_feats)
         return bbox_results, region_embeddings
 
-    def _bbox_forward_train(self, x, sampling_results, gt_bboxes, gt_labels,
+    def _bbox_forward_train(self, x, top_level_feature, sampling_results, gt_bboxes, gt_labels,
                             img_metas):
         """Run forward function and calculate loss for box head in training."""
         rois = bbox2roi([res.bboxes for res in sampling_results])
@@ -286,18 +288,21 @@ class StandardRoIHeadTEXT(StandardRoIHead):
         cls_score_text = region_embeddings @ text_features.T
         cls_score_text = cls_score_text / self.temperature
         
+        cropped_embeddings = self.clip_image_forward_align(top_level_feature, rois)
+        VLM_embedding = self.clip_model.visual.attnpool(cropped_embeddings)
+        
         #0.009#0.008#0.007
              
         # cls_score_text[:,self.novel_label_ids] = -1e11  # 貌似不需要用,用了损失函数非常大,因为把一些值变0了,也可以该labels上
         # ipdb.set_trace()
         # text_cls_loss = F.cross_entropy(cls_score_text / self.temperature, labels, reduction='mean')
         
-        loss_bbox = self.bbox_head.loss(cls_score_text,
-            bbox_results['bbox_pred'], rois,
-            *bbox_targets)
+        # loss_bbox = self.bbox_head.loss(cls_score_text,
+        #     bbox_results['bbox_pred'], rois,
+        #     *bbox_targets)
 
-        bbox_results.update(loss_bbox=loss_bbox)
-        return bbox_results
+        # bbox_results.update(loss_bbox=loss_bbox)
+        return region_embeddings, VLM_embedding, text_features, labels
 
 
     def _mask_forward_train(self, x, sampling_results, bbox_feats, gt_masks,
