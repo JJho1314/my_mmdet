@@ -29,8 +29,7 @@ class clip_image(nn.Module):
         super(clip_image, self).__init__()
         self.clip_model, self.preprocess = clip.load('RN50')
         self.clip_model.cuda().eval().float().requires_grad_(False)
-        self.clip_model.apply(fix_bn)
-        self.clip_model.visual.bn1.eval()
+        # self.clip_model.apply(fix_bn)
         # for param in self.clip_model.parameters():
         #     param.requires_grad = False
         
@@ -42,7 +41,7 @@ class clip_image(nn.Module):
             x = self.clip_model.visual.relu3(self.clip_model.visual.bn3(self.clip_model.visual.conv3(x)))
             x = self.clip_model.visual.avgpool(x)
             return x
-        self.clip_model.apply(fix_bn)
+        # self.clip_model.apply(fix_bn)
 
         outs = []
         x = x.type(self.clip_model.visual.conv1.weight.dtype)

@@ -2,11 +2,20 @@
 import warnings
 
 import torch
-
+import cv2
 from ..builder import DETECTORS, build_backbone, build_head, build_neck
 from .base import BaseDetector
 
+import ipdb
+import torch.nn as nn
+import torch.nn.functional as F
+import torchvision.transforms as transforms
 
+def fix_bn(m):
+    classname = m.__class__.__name__
+    if classname.find('BatchNorm2d') != -1:
+        m.eval()
+        
 @DETECTORS.register_module()
 class TwoStageDetector(BaseDetector):
     """Base class for two-stage detectors.
@@ -30,15 +39,23 @@ class TwoStageDetector(BaseDetector):
                           'please use "init_cfg" instead')
             backbone.pretrained = pretrained
         self.backbone = build_backbone(backbone)
+        self.backbone.cuda().eval().float().requires_grad_(False)
+        self.backbone.apply(fix_bn)
 
         if neck is not None:
             self.neck = build_neck(neck)
+            
+            self.neck.cuda().eval().float().requires_grad_(False)
+            self.neck.apply(fix_bn)
 
         if rpn_head is not None:
             rpn_train_cfg = train_cfg.rpn if train_cfg is not None else None
             rpn_head_ = rpn_head.copy()
             rpn_head_.update(train_cfg=rpn_train_cfg, test_cfg=test_cfg.rpn)
             self.rpn_head = build_head(rpn_head_)
+            
+            self.rpn_head.cuda().eval().float().requires_grad_(False)
+            self.rpn_head.apply(fix_bn)
 
         if roi_head is not None:
             # update train and test cfg here for now
@@ -48,9 +65,16 @@ class TwoStageDetector(BaseDetector):
             roi_head.update(test_cfg=test_cfg.rcnn)
             roi_head.pretrained = pretrained
             self.roi_head = build_head(roi_head)
+            
+            # self.roi_head.cuda().eval().float().requires_grad_(False)
+            # self.roi_head.apply(fix_bn)
 
         self.train_cfg = train_cfg
         self.test_cfg = test_cfg
+        
+        # self.projection = nn.Linear(2048,1024)
+        # nn.init.xavier_uniform_(self.projection.weight)
+        # nn.init.constant_(self.projection.bias, 0)
 
     @property
     def with_rpn(self):
@@ -64,6 +88,10 @@ class TwoStageDetector(BaseDetector):
 
     def extract_feat(self, img):
         """Directly extract features from the backbone+neck."""
+        self.backbone.cuda().eval().float().requires_grad_(False)
+        self.backbone.apply(fix_bn)
+        self.neck.cuda().eval().float().requires_grad_(False)
+        self.neck.apply(fix_bn)
         x = self.backbone(img)
         if self.with_neck:
             x = self.neck(x)
@@ -124,10 +152,18 @@ class TwoStageDetector(BaseDetector):
         Returns:
             dict[str, Tensor]: a dictionary of loss components
         """
-        x, _ = self.extract_feat(img)
+        # img = cv2.imread("/home/work/workspace/CV/data/fvlm_coco_test_data/coco/train2017/000000397131.jpg")
+        # transf = transforms.ToTensor()
+        # img = transf(img).cuda()  # tensor数据格式是torch(C,H,W)
+        # img = torch.unsqueeze(img, dim=0)
+        x, top_level_feature = self.extract_feat(img)
 
         losses = dict()
 
+        self.rpn_head.cuda().eval().float().requires_grad_(False)
+        self.rpn_head.apply(fix_bn)
+        # self.roi_head.cuda().eval().float().requires_grad_(False)
+        # self.roi_head.apply(fix_bn)
         # RPN forward and loss
         if self.with_rpn:
             proposal_cfg = self.train_cfg.get('rpn_proposal',
@@ -140,20 +176,24 @@ class TwoStageDetector(BaseDetector):
                 gt_bboxes_ignore=gt_bboxes_ignore,
                 proposal_cfg=proposal_cfg,
                 **kwargs)
-            losses.update(rpn_losses)
+            # losses.update(rpn_losses)
         else:
             proposal_list = proposals
 
-        roi_losses = self.roi_head.forward_train(x, img_metas, proposal_list,
+        text_cls_loss = self.roi_head.forward_train(x, top_level_feature, 
+                                                 img_metas, proposal_list,
                                                  gt_bboxes, gt_labels,
                                                  gt_bboxes_ignore, gt_masks,
                                                  **kwargs)
         
-        # for name, param in self.roi_head.named_parameters():
-        #     if param.requires_grad and param.grad is None:
-        #         print(name)
+        for name, param in self.roi_head.named_parameters():
+            if param.requires_grad and param.grad is None:
+                print(name)
         
-        losses.update(roi_losses)
+        if isinstance(text_cls_loss, dict):
+            losses.update(text_cls_loss)
+        else:
+            losses['text_cls_loss'] = text_cls_loss
 
         return losses
 

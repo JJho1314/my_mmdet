@@ -17,28 +17,10 @@ import os.path as osp
 import time
 from .roi_extractors.single_level_roi_extractor import SingleRoIExtractor
 
-def weighted_iou_regression_loss(iou_pred, iou_target, weight, avg_factor=None):
-    """
-
-    :param iou_pred: tensor of shape (batch*A*width*height) or (batch*num_pos)
-    :param iou_target: tensor of shape (batch*A*width*height)Or tensor of shape (batch*num_pos), store the iou between
-          predicted boxes and its corresponding groundtruth boxes for the positives and the iou between the predicted
-          boxes and anchors for negatives.
-    :param weight: tensor of shape (batch*A*width*height) or (batch*num_pos), 1 for positives and 0 for negatives and neutrals.
-    :param avg_factor:
-    :return:
-    """
-    # iou_pred_sigmoid = iou_pred.sigmoid()
-    # iou_target = iou_target.detach()
-
-    # L2 loss.
-    # loss = torch.pow((iou_pred_sigmoid - iou_target), 2)*weight
-    # ipdb.set_trace()
-
-    # Binary cross-entropy loss for the positive examples
-    loss = F.binary_cross_entropy_with_logits(iou_pred, iou_target, reduction='none')* weight
-
-    return torch.sum(loss)[None] / avg_factor
+def fix_bn(m):
+    classname = m.__class__.__name__
+    if classname.find('BatchNorm2d') != -1:
+        m.eval()
     
 @HEADS.register_module()
 class StandardRoIHeadTEXT(StandardRoIHead):
@@ -129,29 +111,28 @@ class StandardRoIHeadTEXT(StandardRoIHead):
         # reporter.report()
         print('text embedding finished, {} passed'.format(time.time()-time_start))
         self.bg_embedding = nn.Linear(1,1024)
-        # self.projection = nn.Linear(1024,1024)
+        self.projection = nn.Linear(2048,1024)
         
         self.roialign = SingleRoIExtractor(roi_layer=dict(type='RoIAlign', output_size=7, sampling_ratio=0), out_channels=2048, featmap_strides=[32])
-
-        # self.temperature = torch.nn.Parameter(torch.FloatTensor(1), requires_grad=True)
-        # self.temperature.data.fill_(0.01)
         self.temperature = 0.01
         
-        # if self.ensemble:
-        #     self.projection_for_image = nn.Linear(1024,512)
-        #     nn.init.xavier_uniform_(self.projection_for_image.weight)
-        #     nn.init.constant_(self.projection_for_image.bias, 0)
-
         nn.init.xavier_uniform_(self.bg_embedding.weight)
         nn.init.constant_(self.bg_embedding.bias, 0)
 
-        # nn.init.xavier_uniform_(self.projection.weight)
-        # nn.init.constant_(self.projection.bias, 0)
+        nn.init.xavier_uniform_(self.projection.weight)
+        nn.init.constant_(self.projection.bias, 0)
+        
+        self.mask_head.cuda().eval().float().requires_grad_(False)
+        self.mask_head.apply(fix_bn)
     
     def init_bbox_head(self, bbox_roi_extractor, bbox_head):
         """Initialize ``bbox_head``"""
         self.bbox_roi_extractor = build_roi_extractor(bbox_roi_extractor)
+        self.bbox_roi_extractor.cuda().eval().float().requires_grad_(False)
+        self.bbox_roi_extractor.apply(fix_bn)
         self.bbox_head = build_head(bbox_head)
+        self.bbox_head.cuda().eval().float().requires_grad_(False)
+        self.bbox_head.apply(fix_bn)
 
     def forward_dummy(self, x, proposals):
         """Dummy forward function."""
@@ -168,9 +149,19 @@ class StandardRoIHeadTEXT(StandardRoIHead):
             mask_results = self._mask_forward(x, mask_rois)
             outs = outs + (mask_results['mask_pred'], )
         return outs
+    
+    def cls_adapter(self, region_embeddings, VLM_embedding, text_features):
+        inputs = [region_embeddings, VLM_embedding]
+        cls_embeddings = torch.cat(inputs, dim=1)
+        cls_embeddings = self.projection(cls_embeddings)
+        cls_score = cls_embeddings @ text_features.T 
+        cls_score = cls_score / self.temperature
+        
+        return cls_score
 
     def forward_train(self,
                       x,
+                      top_level_feature,
                       img_metas,
                       proposal_list,
                       gt_bboxes,
@@ -216,22 +207,23 @@ class StandardRoIHeadTEXT(StandardRoIHead):
                 sampling_results.append(sampling_result)
 
         losses = dict()
+        
         # bbox head forward and loss
         if self.with_bbox:
-            bbox_results = self._bbox_forward_train(x,sampling_results,
+            text_cls_loss = self._bbox_forward_train(x,top_level_feature,
+                                                    sampling_results,
                                                     gt_bboxes, gt_labels,
                                                     img_metas)
-            losses.update(bbox_results['loss_bbox'])
+            # losses.update(bbox_results['loss_bbox'])
 
         # mask head forward and loss
-        if self.with_mask:
-            mask_results = self._mask_forward_train(x, sampling_results,
-                                                    bbox_results['bbox_feats'],
-                                                    gt_masks, img_metas)
-            losses.update(mask_results['loss_mask'])
+        # if self.with_mask:
+        #     mask_results = self._mask_forward_train(x, sampling_results,
+        #                                             bbox_results['bbox_feats'],
+        #                                             gt_masks, img_metas)
+        #     losses.update(mask_results['loss_mask'])
 
-        return losses
-    
+        return text_cls_loss
     
     def clip_image_forward_align(self, img, bboxes):
         # Top_level_feature = self.Top_level_feature_extract(img)
@@ -246,10 +238,14 @@ class StandardRoIHeadTEXT(StandardRoIHead):
         """Box head forward function used in both training and testing."""
         # TODO: a more flexible way to decide which feature maps to use
         # rois = rois.float()
+        self.bbox_head.cuda().eval().float().requires_grad_(False)
+        self.bbox_head.apply(fix_bn)
         bbox_feats = self.bbox_roi_extractor(
             x[:self.bbox_roi_extractor.num_inputs], rois)
 
         if self.with_shared_head:
+            self.shared_head.cuda().eval().float().requires_grad_(False)
+            self.shared_head.apply(fix_bn)
             bbox_feats = self.shared_head(bbox_feats)
         region_embeddings = self.bbox_head.forward_embedding(bbox_feats)
         # ipdb.set_trace()
@@ -259,45 +255,36 @@ class StandardRoIHeadTEXT(StandardRoIHead):
             bbox_pred=bbox_pred, bbox_feats=bbox_feats)
         return bbox_results, region_embeddings
 
-    def _bbox_forward_train(self, x, sampling_results, gt_bboxes, gt_labels,
+    def _bbox_forward_train(self, x, top_level_feature, sampling_results, gt_bboxes, gt_labels,
                             img_metas):
         """Run forward function and calculate loss for box head in training."""
+        self.bbox_head.cuda().eval().float().requires_grad_(False)
+        self.bbox_head.apply(fix_bn)
+        self.bg_embedding.cuda().eval().float().requires_grad_(False)
+        self.bg_embedding.apply(fix_bn)
         rois = bbox2roi([res.bboxes for res in sampling_results])
-        num_total_pos = sum([max(res.pos_inds.numel(), 1) for res in sampling_results])
         input_one = x[0].new_ones(1)
         bg_class_embedding = self.bg_embedding(input_one).reshape(1, 1024)
         bg_class_embedding = torch.nn.functional.normalize(bg_class_embedding, p=2, dim=1)
-        bbox_results, region_embeddings = self._bbox_forward(x, rois)
+        _, region_embeddings = self._bbox_forward(x, rois)
         # ipdb.set_trace()
         bbox_targets = self.bbox_head.get_targets(sampling_results, gt_bboxes,
                                                   gt_labels, self.train_cfg)
-        labels, label_weights, bbox_target, bbox_weights = bbox_targets
-        
-        pred_bbox = delta2bbox(rois[:,1:], bbox_results['bbox_pred'])
-        target_bbox = delta2bbox(rois[:,1:], bbox_target)
-        
-        bbox_weight_list = torch.split(bbox_weights, 1, -1)
-        bbox_weight = bbox_weight_list[0]
-        
-        iou = torch.unsqueeze(bbox_overlaps(pred_bbox, target_bbox, is_aligned=True), dim=1) # (batch*width_i*height_i*A)
+        labels, _, _, _ = bbox_targets
+
         region_embeddings = torch.nn.functional.normalize(region_embeddings, p=2, dim=1)
         text_features = torch.cat([self.text_features_for_classes, bg_class_embedding], dim=0)
         
-        cls_score_text = region_embeddings @ text_features.T
-        cls_score_text = cls_score_text / self.temperature
+        cropped_embeddings = self.clip_image_forward_align(top_level_feature, rois)
+        VLM_embedding = self.clip_model.visual.attnpool(cropped_embeddings)
         
-        #0.009#0.008#0.007
-             
-        # cls_score_text[:,self.novel_label_ids] = -1e11  # 貌似不需要用,用了损失函数非常大,因为把一些值变0了,也可以该labels上
-        # ipdb.set_trace()
-        # text_cls_loss = F.cross_entropy(cls_score_text / self.temperature, labels, reduction='mean')
+        cls_score = self.cls_adapter(region_embeddings, VLM_embedding, text_features)
         
-        loss_bbox = self.bbox_head.loss(cls_score_text,
-            bbox_results['bbox_pred'], rois,
-            *bbox_targets)
-
-        bbox_results.update(loss_bbox=loss_bbox)
-        return bbox_results
+        cls_score = cls_score.softmax(dim = 1)
+        
+        text_cls_loss = F.cross_entropy(cls_score, labels, reduction='mean')
+        
+        return text_cls_loss
 
 
     def _mask_forward_train(self, x, sampling_results, bbox_feats, gt_masks,
@@ -401,18 +388,11 @@ class StandardRoIHeadTEXT(StandardRoIHead):
         cropped_embeddings = self.clip_image_forward_align(top_level_feature, rois)
         VLM_embedding = self.clip_model.visual.attnpool(cropped_embeddings)
         
-        cls_score_VLM = VLM_embedding @ text_features.T
-        cls_score_VLM = cls_score_VLM / self.temperature
+        # cls_score_VLM = VLM_embedding @ text_features.T
+        # cls_score_VLM = cls_score_VLM / self.temperature
         #0.009#0.008#0.007
-           
-        a = 1/3
 
-        # cls_score= torch.where(self.novel_index,cls_score_VLM**(1-a)*cls_score_text**a,
-        #                 cls_score_text**(1-a)*cls_score_VLM**a)
-
-        # cls_score_align= torch.where(self.novel_index,cls_score_clip_align**(1-a)*cls_score_text**a,
-                        #    cls_score_text**(1-a)*cls_score_clip_align**a)
-        cls_score = cls_score_text
+        cls_score = self.cls_adapter(region_embeddings, VLM_embedding, text_features)
         # cls_score = cls_score_image
         # ipdb.set_trace()
         
