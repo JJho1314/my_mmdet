@@ -111,16 +111,14 @@ class StandardRoIHeadTEXT(StandardRoIHead):
         # reporter.report()
         print('text embedding finished, {} passed'.format(time.time()-time_start))
         self.bg_embedding = nn.Linear(1,1024)
-        self.projection = nn.Linear(2048,1024)
+        self.projection1 = nn.Linear(2048,1024)
+        self.projection2 = nn.Linear(1024,1024)
         
         self.roialign = SingleRoIExtractor(roi_layer=dict(type='RoIAlign', output_size=7, sampling_ratio=0), out_channels=2048, featmap_strides=[32])
         self.temperature = 0.01
         
         nn.init.xavier_uniform_(self.bg_embedding.weight)
         nn.init.constant_(self.bg_embedding.bias, 0)
-
-        nn.init.xavier_uniform_(self.projection.weight)
-        nn.init.constant_(self.projection.bias, 0)
         
         self.mask_head.cuda().eval().float().requires_grad_(False)
         self.mask_head.apply(fix_bn)
@@ -153,7 +151,8 @@ class StandardRoIHeadTEXT(StandardRoIHead):
     def cls_adapter(self, region_embeddings, VLM_embedding, text_features):
         inputs = [region_embeddings, VLM_embedding]
         cls_embeddings = torch.cat(inputs, dim=1)
-        cls_embeddings = self.projection(cls_embeddings)
+        cls_embeddings = self.projection1(cls_embeddings)
+        cls_embeddings = self.projection2(cls_embeddings)
         cls_score = cls_embeddings @ text_features.T 
         cls_score = cls_score / self.temperature
         
@@ -267,7 +266,7 @@ class StandardRoIHeadTEXT(StandardRoIHead):
         bg_class_embedding = self.bg_embedding(input_one).reshape(1, 1024)
         bg_class_embedding = torch.nn.functional.normalize(bg_class_embedding, p=2, dim=1)
         _, region_embeddings = self._bbox_forward(x, rois)
-        # ipdb.set_trace()
+        ipdb.set_trace()
         bbox_targets = self.bbox_head.get_targets(sampling_results, gt_bboxes,
                                                   gt_labels, self.train_cfg)
         labels, _, _, _ = bbox_targets
@@ -388,12 +387,12 @@ class StandardRoIHeadTEXT(StandardRoIHead):
         cropped_embeddings = self.clip_image_forward_align(top_level_feature, rois)
         VLM_embedding = self.clip_model.visual.attnpool(cropped_embeddings)
         
-        # cls_score_VLM = VLM_embedding @ text_features.T
-        # cls_score_VLM = cls_score_VLM / self.temperature
+        cls_score_VLM = VLM_embedding @ text_features.T
+        cls_score_VLM = cls_score_VLM / self.temperature
         #0.009#0.008#0.007
 
         cls_score = self.cls_adapter(region_embeddings, VLM_embedding, text_features)
-        # cls_score = cls_score_image
+        cls_score = cls_score_text
         # ipdb.set_trace()
         
         bbox_pred = bbox_results['bbox_pred']

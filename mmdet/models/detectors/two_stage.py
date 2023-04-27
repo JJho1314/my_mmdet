@@ -186,9 +186,9 @@ class TwoStageDetector(BaseDetector):
                                                  gt_bboxes_ignore, gt_masks,
                                                  **kwargs)
         
-        for name, param in self.roi_head.named_parameters():
-            if param.requires_grad and param.grad is None:
-                print(name)
+        # for name, param in self.roi_head.named_parameters():
+        #     if param.requires_grad and param.grad is None:
+        #         print(name)
         
         if isinstance(text_cls_loss, dict):
             losses.update(text_cls_loss)
