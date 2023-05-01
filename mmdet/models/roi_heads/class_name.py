@@ -14,6 +14,13 @@ COCO_CLASSES = ('person', 'bicycle', 'car', 'motorcycle', 'airplane', 'bus',
             'oven', 'toaster', 'sink', 'refrigerator', 'book', 'clock',
             'vase', 'scissors', 'teddy bear', 'hair drier', 'toothbrush')
 
+COCO_BASE_CLASSES = ('person', 'bicycle', 'car', 'motorcycle', 'train', 'truck', 'boat', 'bench', 
+           'bird', 'horse', 'sheep', 'bear', 'zebra', 'giraffe', 'backpack', 'handbag', 
+           'suitcase', 'frisbee', 'skis', 'kite', 'surfboard', 'bottle', 'fork', 'spoon', 
+           'bowl', 'banana', 'apple', 'sandwich', 'orange', 'broccoli', 'carrot', 'pizza', 
+           'donut', 'chair', 'bed', 'toilet', 'tv', 'laptop', 'mouse', 'remote', 'microwave', 
+           'oven', 'toaster', 'refrigerator', 'book', 'clock', 'vase', 'toothbrush')
+
 LVIS_CLASSES = (
     'aerosol_can', 'air_conditioner', 'airplane', 'alarm_clock', 'alcohol',
     'alligator', 'almond', 'ambulance', 'amplifier', 'anklet', 'antenna',

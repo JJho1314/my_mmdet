@@ -16,29 +16,6 @@ from tqdm import tqdm
 import os.path as osp
 import time
 from .roi_extractors.single_level_roi_extractor import SingleRoIExtractor
-
-def weighted_iou_regression_loss(iou_pred, iou_target, weight, avg_factor=None):
-    """
-
-    :param iou_pred: tensor of shape (batch*A*width*height) or (batch*num_pos)
-    :param iou_target: tensor of shape (batch*A*width*height)Or tensor of shape (batch*num_pos), store the iou between
-          predicted boxes and its corresponding groundtruth boxes for the positives and the iou between the predicted
-          boxes and anchors for negatives.
-    :param weight: tensor of shape (batch*A*width*height) or (batch*num_pos), 1 for positives and 0 for negatives and neutrals.
-    :param avg_factor:
-    :return:
-    """
-    # iou_pred_sigmoid = iou_pred.sigmoid()
-    # iou_target = iou_target.detach()
-
-    # L2 loss.
-    # loss = torch.pow((iou_pred_sigmoid - iou_target), 2)*weight
-    # ipdb.set_trace()
-
-    # Binary cross-entropy loss for the positive examples
-    loss = F.binary_cross_entropy_with_logits(iou_pred, iou_target, reduction='none')* weight
-
-    return torch.sum(loss)[None] / avg_factor
     
 @HEADS.register_module()
 class StandardRoIHeadTEXT(StandardRoIHead):
@@ -73,27 +50,30 @@ class StandardRoIHeadTEXT(StandardRoIHead):
         elif bbox_head.num_classes == 20:
             self.CLASSES = VOC_CLASSES
             dataset = 'voc'
+        elif bbox_head.num_classes == 48:
+            self.CLASSES = COCO_BASE_CLASSES
         else:
             self.CLASSES = LVIS_CLASSES
             dataset = 'lvis'
         self.num_classes = len(self.CLASSES)
         print('num_classes:',self.num_classes)
         
-        if self.num_classes == 1203:
-            self.base_label_ids = lvis_base_label_ids
-            self.novel_label_ids = torch.tensor(lvis_novel_label_ids, device=device)
-            # self.novel_index = F.pad(torch.bincount(self.novel_label_ids),(0,self.num_classes-self.novel_label_ids.max())).bool()
-            # 没用到
-        elif self.num_classes == 20:
-            self.novel_label_ids = torch.tensor(voc_novel_label_ids, device=device)
-            # self.novel_index = F.pad(torch.bincount(self.novel_label_ids),(0,self.num_classes-self.novel_label_ids.max())).bool()
-        elif self.num_classes == 80:
-            self.base_label_ids = coco_base_label_ids
-            self.novel_label_ids = torch.tensor(coco_novel_label_ids, device=device)
-            # self.novel_index = F.pad(torch.bincount(self.novel_label_ids),(0,self.num_classes-self.novel_label_ids.max())).bool()
+        # if self.num_classes == 1203:
+        #     self.base_label_ids = lvis_base_label_ids
+        #     self.novel_label_ids = torch.tensor(lvis_novel_label_ids, device=device)
+        #     # self.novel_index = F.pad(torch.bincount(self.novel_label_ids),(0,self.num_classes-self.novel_label_ids.max())).bool()
+        #     # 没用到
+        # elif self.num_classes == 20:
+        #     self.novel_label_ids = torch.tensor(voc_novel_label_ids, device=device)
+        #     # self.novel_index = F.pad(torch.bincount(self.novel_label_ids),(0,self.num_classes-self.novel_label_ids.max())).bool()
+        # elif self.num_classes == 80:
+        #     self.base_label_ids = coco_base_label_ids
+        #     self.novel_label_ids = torch.tensor(coco_novel_label_ids, device=device)
+        #     # self.novel_index = F.pad(torch.bincount(self.novel_label_ids),(0,self.num_classes-self.novel_label_ids.max())).bool()
+        
         self.clip_model, self.preprocess = clip.load('RN50', device)
         self.clip_model.eval().float()
-        # self.reporter = MemReporter(self.clip_model)
+
         for param in self.clip_model.parameters():
             param.requires_grad = False
    
@@ -126,21 +106,14 @@ class StandardRoIHeadTEXT(StandardRoIHead):
         self.text_features_for_classes = self.text_features_for_classes.float()
         self.text_features_for_classes = F.normalize(self.text_features_for_classes,dim=-1)
         # ipdb.set_trace()
-        # reporter.report()
+        
         print('text embedding finished, {} passed'.format(time.time()-time_start))
         self.bg_embedding = nn.Linear(1,1024)
         # self.projection = nn.Linear(1024,1024)
         
         self.roialign = SingleRoIExtractor(roi_layer=dict(type='RoIAlign', output_size=7, sampling_ratio=0), out_channels=2048, featmap_strides=[32])
 
-        # self.temperature = torch.nn.Parameter(torch.FloatTensor(1), requires_grad=True)
-        # self.temperature.data.fill_(0.01)
         self.temperature = 0.01
-        
-        # if self.ensemble:
-        #     self.projection_for_image = nn.Linear(1024,512)
-        #     nn.init.xavier_uniform_(self.projection_for_image.weight)
-        #     nn.init.constant_(self.projection_for_image.bias, 0)
 
         nn.init.xavier_uniform_(self.bg_embedding.weight)
         nn.init.constant_(self.bg_embedding.bias, 0)
@@ -230,8 +203,7 @@ class StandardRoIHeadTEXT(StandardRoIHead):
                                                     gt_masks, img_metas)
             losses.update(mask_results['loss_mask'])
 
-        return losses
-    
+        return losses  
     
     def clip_image_forward_align(self, img, bboxes):
         # Top_level_feature = self.Top_level_feature_extract(img)
@@ -273,13 +245,6 @@ class StandardRoIHeadTEXT(StandardRoIHead):
                                                   gt_labels, self.train_cfg)
         labels, label_weights, bbox_target, bbox_weights = bbox_targets
         
-        pred_bbox = delta2bbox(rois[:,1:], bbox_results['bbox_pred'])
-        target_bbox = delta2bbox(rois[:,1:], bbox_target)
-        
-        bbox_weight_list = torch.split(bbox_weights, 1, -1)
-        bbox_weight = bbox_weight_list[0]
-        
-        iou = torch.unsqueeze(bbox_overlaps(pred_bbox, target_bbox, is_aligned=True), dim=1) # (batch*width_i*height_i*A)
         region_embeddings = torch.nn.functional.normalize(region_embeddings, p=2, dim=1)
         text_features = torch.cat([self.text_features_for_classes, bg_class_embedding], dim=0)
         

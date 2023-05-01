@@ -28,20 +28,31 @@ test_pipeline = [
             dict(type='Collect', keys=['img']),
         ])
 ]
+
+classes = ('person', 'bicycle', 'car', 'motorcycle', 'train', 'truck', 'boat', 'bench', 
+           'bird', 'horse', 'sheep', 'bear', 'zebra', 'giraffe', 'backpack', 'handbag', 
+           'suitcase', 'frisbee', 'skis', 'kite', 'surfboard', 'bottle', 'fork', 'spoon', 
+           'bowl', 'banana', 'apple', 'sandwich', 'orange', 'broccoli', 'carrot', 'pizza', 
+           'donut', 'chair', 'bed', 'toilet', 'tv', 'laptop', 'mouse', 'remote', 'microwave', 
+           'oven', 'toaster', 'refrigerator', 'book', 'clock', 'vase', 'toothbrush')
+
 data = dict(
     samples_per_gpu=8,
     workers_per_gpu=8,
     train=dict(
+        classes=classes,
         type=dataset_type,
         ann_file=data_root + 'annotations/instances_train2017.json',
         img_prefix=data_root + 'train2017/',
         pipeline=train_pipeline),
     val=dict(
+        classes=classes,
         type=dataset_type,
         ann_file=data_root + 'annotations/instances_val2017.json',
         img_prefix=data_root + 'val2017/',
         pipeline=test_pipeline),
     test=dict(
+        classes=classes,
         type=dataset_type,
         ann_file=data_root + 'annotations/instances_val2017.json',
         img_prefix=data_root + 'val2017/',
