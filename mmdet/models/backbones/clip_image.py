@@ -6,7 +6,7 @@ from mmcv.cnn import build_conv_layer, build_norm_layer, build_plugin_layer
 
 from ..builder import BACKBONES
 import ipdb
-import clip
+import .clip.clip as clip
 from mmcv.runner import BaseModule
 
 from torch.nn import functional as F
