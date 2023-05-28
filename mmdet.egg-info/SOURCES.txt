@@ -156,6 +156,10 @@ mmdet/models/backbones/res2net.py
 mmdet/models/backbones/resnest.py
 mmdet/models/backbones/resnet.py
 mmdet/models/backbones/resnext.py
+mmdet/models/backbones/clip/__init__.py
+mmdet/models/backbones/clip/clip.py
+mmdet/models/backbones/clip/model.py
+mmdet/models/backbones/clip/simple_tokenizer.py
 mmdet/models/dense_heads/__init__.py
 mmdet/models/dense_heads/anchor_free_head.py
 mmdet/models/dense_heads/anchor_head.py
@@ -305,6 +309,7 @@ mmdet/models/roi_heads/scnet_roi_head.py
 mmdet/models/roi_heads/sparse_roi_head.py
 mmdet/models/roi_heads/standard_roi_head.py
 mmdet/models/roi_heads/standard_roi_head_text.py
+mmdet/models/roi_heads/test.py
 mmdet/models/roi_heads/test_mixins.py
 mmdet/models/roi_heads/trident_roi_head.py
 mmdet/models/roi_heads/visualize.py

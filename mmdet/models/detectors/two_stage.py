@@ -34,8 +34,8 @@ class TwoStageDetector(BaseDetector):
                           'please use "init_cfg" instead')
             backbone.pretrained = pretrained
         self.backbone = build_backbone(backbone)
-        self.backbone.cuda().eval().float().requires_grad_(False)
-        self.backbone.apply(fix_bn)
+        # self.backbone.cuda().eval().float().requires_grad_(False)
+        # self.backbone.apply(fix_bn)
 
         if neck is not None:
             self.neck = build_neck(neck)
@@ -70,8 +70,8 @@ class TwoStageDetector(BaseDetector):
 
     def extract_feat(self, img):
         """Directly extract features from the backbone+neck."""
-        self.backbone.cuda().eval().float().requires_grad_(False)
-        self.backbone.apply(fix_bn)
+        # self.backbone.cuda().eval().float().requires_grad_(False)
+        # self.backbone.apply(fix_bn)
         x = self.backbone(img)
         if self.with_neck:
             x = self.neck(x)
