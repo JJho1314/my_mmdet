@@ -28,9 +28,8 @@ class clip_image(nn.Module):
     def __init__(self):
         super(clip_image, self).__init__()
         self.clip_model, self.preprocess = clip.load('RN50')
-        self.clip_model.cuda().eval().float().requires_grad_(False)
+        # self.clip_model.cuda().eval().float().requires_grad_(False)
         self.clip_model.apply(fix_bn)
-        self.clip_model.visual.bn1.eval()
         # for param in self.clip_model.parameters():
         #     param.requires_grad = False
         

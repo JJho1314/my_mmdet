@@ -6,7 +6,7 @@ from mmdet.models.builder import HEADS
 from mmdet.models.utils import build_linear_layer
 from .bbox_head import BBoxHead
 import ipdb
-
+import loralib as lora
 
 @HEADS.register_module()
 class ConvFCBBoxHead(BBoxHead):
@@ -173,8 +173,10 @@ class ConvFCBBoxHead(BBoxHead):
             for i in range(num_branch_fcs):
                 fc_in_channels = (
                     last_layer_dim if i == 0 else self.fc_out_channels)
+                # branch_fcs.append(
+                #     nn.Linear(fc_in_channels, self.fc_out_channels))
                 branch_fcs.append(
-                    nn.Linear(fc_in_channels, self.fc_out_channels))
+                    lora.Linear(fc_in_channels, self.fc_out_channels, r=8, lora_alpha=32))
             last_layer_dim = self.fc_out_channels
         return branch_convs, branch_fcs, last_layer_dim
     

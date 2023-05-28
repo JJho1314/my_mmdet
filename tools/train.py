@@ -20,7 +20,7 @@ from mmdet.models import build_detector
 from mmdet.utils import (collect_env, get_device, get_root_logger,
                          replace_cfg_vals, rfnext_init_model,
                          setup_multi_processes, update_data_root)
-
+import loralib as lora
 
 def parse_args():
     parser = argparse.ArgumentParser(description='Train a detector')
@@ -233,6 +233,12 @@ def main():
             CLASSES=datasets[0].CLASSES)
     # add an attribute for visualization convenience
     model.CLASSES = datasets[0].CLASSES
+    
+    # for n, p in model.named_parameters():
+    #     if 'shared_fcs' not in n:
+    #         p.requires_grad = False
+    lora.mark_only_lora_as_trainable(model)
+            
     train_detector(
         model,
         datasets,

@@ -1,6 +1,6 @@
 # dataset settings
 dataset_type = 'CocoDataset'
-data_root = '/home/work/workspace/CV/data/coco/'
+data_root = '/data/hzf_data/coco/'
 img_norm_cfg = dict(
     mean=[0.48145466*255, 0.4578275*255, 0.40821073*255], std=[0.26862954*255, 0.26130258*255, 0.27577711*255], to_rgb=True)
 train_pipeline = [
@@ -29,7 +29,7 @@ test_pipeline = [
         ])
 ]
 data = dict(
-    samples_per_gpu=8,
+    samples_per_gpu=2,
     workers_per_gpu=8,
     train=dict(
         type=dataset_type,
