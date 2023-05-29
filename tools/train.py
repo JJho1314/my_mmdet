@@ -237,7 +237,9 @@ def main():
     # for n, p in model.named_parameters():
     #     if 'shared_fcs' not in n:
     #         p.requires_grad = False
-    lora.mark_only_lora_as_trainable(model)
+    for n, p in model.named_parameters():
+        if 'lora_' not in n:
+            p.requires_grad = False
             
     train_detector(
         model,

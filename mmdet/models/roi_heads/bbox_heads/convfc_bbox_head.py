@@ -61,18 +61,6 @@ class ConvFCBBoxHead(BBoxHead):
                 self.num_shared_convs, self.num_shared_fcs, self.in_channels,
                 True)
         self.shared_out_channels = last_layer_dim
-        
-         # add shared convs and fcs for iou
-        self.share_iou_convs, self.share_iou_fcs, last_layer_dim = \
-            self._add_conv_fc_branch(
-                self.num_shared_convs, self.num_shared_fcs, self.in_channels,
-                True)
-        self.shared_out_channels = last_layer_dim
-        
-        # add iou specific branch
-        self.iou_convs, self.iou_fcs, self.iou_last_dim = \
-            self._add_conv_fc_branch(
-                self.num_reg_convs, self.num_reg_fcs, self.shared_out_channels)
 
         # add cls specific branch
         self.cls_convs, self.cls_fcs, self.cls_last_dim = \
@@ -108,14 +96,7 @@ class ConvFCBBoxHead(BBoxHead):
                 self.reg_predictor_cfg,
                 in_features=self.reg_last_dim,
                 out_features=out_dim_reg)
-            
-        self.with_iou = 1
-        if self.with_iou:
-            out_dim_iou = 1
-            self.fc_iou = build_linear_layer(
-                self.iou_predictor_cfg,
-                in_features=self.iou_last_dim,
-                out_features=out_dim_iou)
+    
 
         if init_cfg is None:
             # when init_cfg is None,
@@ -132,8 +113,7 @@ class ConvFCBBoxHead(BBoxHead):
                     override=[
                         dict(name='shared_fcs'),
                         dict(name='cls_fcs'),
-                        dict(name='reg_fcs'),
-                        dict(name='iou_fcs')
+                        dict(name='reg_fcs')
                     ])
             ]
 
@@ -173,10 +153,10 @@ class ConvFCBBoxHead(BBoxHead):
             for i in range(num_branch_fcs):
                 fc_in_channels = (
                     last_layer_dim if i == 0 else self.fc_out_channels)
-                # branch_fcs.append(
-                #     nn.Linear(fc_in_channels, self.fc_out_channels))
                 branch_fcs.append(
-                    lora.Linear(fc_in_channels, self.fc_out_channels, r=8, lora_alpha=32))
+                    nn.Linear(fc_in_channels, self.fc_out_channels))
+                # branch_fcs.append(
+                #     lora.Linear(fc_in_channels, self.fc_out_channels, r=8, lora_alpha=32))
             last_layer_dim = self.fc_out_channels
         return branch_convs, branch_fcs, last_layer_dim
     
@@ -192,21 +172,6 @@ class ConvFCBBoxHead(BBoxHead):
             x = x.flatten(1)  
 
             for fc in self.shared_fcs:
-                x = self.relu(fc(x))
-        return x
-    
-    def forward_iou_embedding(self,x):
-        if self.num_shared_convs > 0:
-            for conv in self.share_iou_convs:
-                x = conv(x)
-
-        if self.num_shared_fcs > 0:
-            if self.with_avg_pool:
-                x = self.avg_pool(x)
-
-            x = x.flatten(1)  
-
-            for fc in self.share_iou_fcs:
                 x = self.relu(fc(x))
         return x
 
@@ -250,7 +215,7 @@ class ConvFCBBoxHead(BBoxHead):
     #     bbox_pred = self.fc_reg(x_reg) if self.with_reg else None
     #     return cls_score, bbox_pred
     
-    def forward(self, region_embeddings, iou_embeddings):
+    def forward(self, region_embeddings):
         # shared part
         # if self.num_shared_convs > 0:
         #     for conv in self.shared_convs:
@@ -267,7 +232,6 @@ class ConvFCBBoxHead(BBoxHead):
         # separate branches
         # x_cls = x
         x_reg = region_embeddings
-        x_iou = iou_embeddings
 
         # for conv in self.cls_convs:
         #     x_cls = conv(x_cls)
@@ -287,20 +251,10 @@ class ConvFCBBoxHead(BBoxHead):
         for fc in self.reg_fcs:
             x_reg = self.relu(fc(x_reg))
             
-        for conv in self.iou_convs:
-            x_iou = conv(x_iou)
-        if x_iou.dim() > 2:
-            if self.with_avg_pool:
-                x_iou = self.avg_pool(x_iou)
-            x_iou = x_iou.flatten(1)
-        for fc in self.iou_fcs:
-            x_iou = self.relu(fc(x_iou))
-            
         # cls_score = self.fc_cls(x_cls) if self.with_cls else None
         bbox_pred = self.fc_reg(x_reg) if self.with_reg else None
-        iou_pred = self.fc_iou(x_iou) if self.with_iou else None
-        
-        return  bbox_pred, iou_pred
+    
+        return  bbox_pred
 
 
 @HEADS.register_module()

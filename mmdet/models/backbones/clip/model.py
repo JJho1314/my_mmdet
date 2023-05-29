@@ -5,7 +5,86 @@ import numpy as np
 import torch
 import torch.nn.functional as F
 from torch import nn
-import loralib as lora
+import ipdb
+import math
+
+class LoRALayer():
+    def __init__(
+        self, 
+        r: int, 
+        lora_alpha: int, 
+        lora_dropout: float,
+        merge_weights: bool,
+    ):
+        self.r = r
+        self.lora_alpha = lora_alpha
+        # Optional dropout
+        if lora_dropout > 0.:
+            self.lora_dropout = nn.Dropout(p=lora_dropout)
+        else:
+            self.lora_dropout = lambda x: x
+        # Mark the weight as unmerged
+        self.merged = False
+        self.merge_weights = merge_weights
+        
+class LORA_Conv2d(nn.Conv2d, LoRALayer):
+    # LoRA implemented in a dense layer
+    def __init__(
+        self, 
+        in_channels: int, 
+        out_channels: int,
+        kernel_size: int,
+        r: int = 0, 
+        lora_alpha: int = 1, 
+        lora_dropout: float = 0.,
+        merge_weights: bool = True,
+        **kwargs
+    ):
+        nn.Conv2d.__init__(self, in_channels, out_channels, kernel_size, **kwargs)
+        LoRALayer.__init__(self, r=r, lora_alpha=lora_alpha, lora_dropout=lora_dropout,
+                           merge_weights=merge_weights)
+        assert type(kernel_size) is int
+        # Actual trainable parameters
+        if r > 0:
+            self.lora_A = nn.Parameter(
+                self.weight.new_zeros((r*kernel_size, in_channels*kernel_size))
+            )
+            self.lora_B = nn.Parameter(
+                self.weight.new_zeros((out_channels//self.groups*kernel_size, r*kernel_size))
+            )
+            self.scaling = self.lora_alpha / self.r
+            # Freezing the pre-trained weight matrix
+            self.weight.requires_grad = False
+        self.reset_parameters()
+
+    def reset_parameters(self):
+        nn.Conv2d.reset_parameters(self)
+        if hasattr(self, 'lora_A'):
+            # initialize A the same way as the default for nn.Linear and B to zero
+            nn.init.kaiming_uniform_(self.lora_A, a=math.sqrt(5))
+            nn.init.zeros_(self.lora_B)
+
+    def train(self, mode: bool = True):
+        nn.Conv2d.train(self, mode)
+        if mode:
+            if self.merge_weights and self.merged:
+                # Make sure that the weights are not merged
+                self.weight.data -= (self.lora_B @ self.lora_A).view(self.weight.shape) * self.scaling
+                self.merged = False
+        else:
+            if self.merge_weights and not self.merged:
+                # Merge the weights and mark it
+                self.weight.data += (self.lora_B @ self.lora_A).view(self.weight.shape) * self.scaling
+                self.merged = True
+
+    def forward(self, x: torch.Tensor):
+        if self.r > 0 and not self.merged:
+            return F.conv2d(
+                x, 
+                self.weight + (self.lora_B @ self.lora_A).view(self.weight.shape) * self.scaling,
+                self.bias, self.stride, self.padding, self.dilation, self.groups
+            )
+        return nn.Conv2d.forward(self, x)
 
 class Bottleneck(nn.Module):
     expansion = 4
@@ -14,20 +93,17 @@ class Bottleneck(nn.Module):
         super().__init__()
 
         # all conv layers have stride 1. an avgpool is performed after the second convolution when stride > 1
-        # self.conv1 = nn.Conv2d(inplanes, planes, 1, bias=False)
-        self.conv1 = lora.Conv2d(inplanes, planes, 1, r=4, lora_alpha=32)
+        self.conv1 = nn.Conv2d(inplanes, planes, 1, bias=False)
         self.bn1 = nn.BatchNorm2d(planes)
         self.relu1 = nn.ReLU(inplace=True)
 
-        # self.conv2 = nn.Conv2d(planes, planes, 3, padding=1, bias=False)
-        self.conv2 = lora.Conv2d(planes, planes, 3, r=4, lora_alpha=32)
+        self.conv2 = nn.Conv2d(planes, planes, 3, padding=1, bias=False)
         self.bn2 = nn.BatchNorm2d(planes)
         self.relu2 = nn.ReLU(inplace=True)
 
         self.avgpool = nn.AvgPool2d(stride) if stride > 1 else nn.Identity()
 
-        # self.conv3 = nn.Conv2d(planes, planes * self.expansion, 1, bias=False)
-        self.conv3 = lora.Conv2d(planes, planes * self.expansion, 1, r=4, lora_alpha=32)
+        self.conv3 = nn.Conv2d(planes, planes * self.expansion, 1, bias=False)
         self.bn3 = nn.BatchNorm2d(planes * self.expansion)
         self.relu3 = nn.ReLU(inplace=True)
 
@@ -57,6 +133,52 @@ class Bottleneck(nn.Module):
         out = self.relu3(out)
         return out
 
+class Bottleneck_lora(nn.Module):
+    expansion = 4
+
+    def __init__(self, inplanes, planes, stride=1):
+        super().__init__()
+
+        # all conv layers have stride 1. an avgpool is performed after the second convolution when stride > 1
+        self.conv1 = LORA_Conv2d(inplanes, planes, 1, bias=False, r=16, lora_alpha=8, lora_dropout = 0.05)
+        self.bn1 = nn.BatchNorm2d(planes)
+        self.relu1 = nn.ReLU(inplace=True)
+
+        self.conv2 = LORA_Conv2d(planes, planes, 3, padding=1, bias=False, r=8, lora_alpha=16, lora_dropout = 0.05)
+        self.bn2 = nn.BatchNorm2d(planes)
+        self.relu2 = nn.ReLU(inplace=True)
+
+        self.avgpool = nn.AvgPool2d(stride) if stride > 1 else nn.Identity()
+
+        self.conv3 = LORA_Conv2d(planes, planes * self.expansion, 1, bias=False, r=8, lora_alpha=16, lora_dropout = 0.05)
+        self.bn3 = nn.BatchNorm2d(planes * self.expansion)
+        self.relu3 = nn.ReLU(inplace=True)
+
+        self.downsample = None
+        self.stride = stride
+
+        if stride > 1 or inplanes != planes * Bottleneck.expansion:
+            # downsampling layer is prepended with an avgpool, and the subsequent convolution has stride 1
+            self.downsample = nn.Sequential(OrderedDict([
+                ("-1", nn.AvgPool2d(stride)),
+                ("0", nn.Conv2d(inplanes, planes * self.expansion, 1, stride=1, bias=False)),
+                # ("0", LORA_Conv2d(inplanes, planes * self.expansion, 1, stride=1, bias=False, r=8, lora_alpha=16, lora_dropout = 0.05)),
+                ("1", nn.BatchNorm2d(planes * self.expansion))
+            ]))
+
+    def forward(self, x: torch.Tensor):
+        identity = x
+        out = self.relu1(self.bn1(self.conv1(x)))
+        out = self.relu2(self.bn2(self.conv2(out)))
+        out = self.avgpool(out)
+        out = self.bn3(self.conv3(out))
+
+        if self.downsample is not None:
+            identity = self.downsample(x)
+
+        out += identity
+        out = self.relu3(out)
+        return out
 
 class AttentionPool2d(nn.Module):
     def __init__(self, spacial_dim: int, embed_dim: int, num_heads: int, output_dim: int = None):
@@ -122,9 +244,9 @@ class ModifiedResNet(nn.Module):
         # residual layers
         self._inplanes = width  # this is a *mutable* variable used during construction
         self.layer1 = self._make_layer(width, layers[0])
-        self.layer2 = self._make_layer(width * 2, layers[1], stride=2)
-        self.layer3 = self._make_layer(width * 4, layers[2], stride=2)
-        self.layer4 = self._make_layer(width * 8, layers[3], stride=2)
+        self.layer2 = self._make_layer_lora(width * 2, layers[1], stride=2)
+        self.layer3 = self._make_layer_lora(width * 4, layers[2], stride=2)
+        self.layer4 = self._make_layer_lora(width * 8, layers[3], stride=2)
 
         embed_dim = width * 32  # the ResNet feature dimension
         self.attnpool = AttentionPool2d(input_resolution // 32, embed_dim, heads, output_dim)
@@ -135,6 +257,15 @@ class ModifiedResNet(nn.Module):
         self._inplanes = planes * Bottleneck.expansion
         for _ in range(1, blocks):
             layers.append(Bottleneck(self._inplanes, planes))
+
+        return nn.Sequential(*layers)
+
+    def _make_layer_lora(self, planes, blocks, stride=1):
+        layers = [Bottleneck_lora(self._inplanes, planes, stride)]
+
+        self._inplanes = planes * Bottleneck_lora.expansion
+        for _ in range(1, blocks):
+            layers.append(Bottleneck_lora(self._inplanes, planes))
 
         return nn.Sequential(*layers)
 
@@ -435,5 +566,5 @@ def build_model(state_dict: dict):
             del state_dict[key]
 
     convert_weights(model)
-    model.load_state_dict(state_dict)
-    return model.eval()
+    model.load_state_dict(state_dict,False)
+    return model
